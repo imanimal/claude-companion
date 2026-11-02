@@ -1,0 +1,135 @@
+/* The pet overlay: the sprite with a simple drop shadow, a stack of session pills above or below it (pet.js
+   picks the side from where the pet sits on screen), hover keys and a count badge. The window is transparent
+   and click-through outside these parts. Pills are the Pocket island: graphite plastic in any palette, an
+   orange progress line, an LCD chip for the percentage, 9×9 status icons. */
+
+:root {
+  --chrome-bg: #2a2722; --chrome-hi: #38342e; --chrome-fg: #f6f3ec; --chrome-2: #c9c2b4; --chrome-3: #9b9486;
+  --accent: #ff5b1f; --on-accent: #1b1915; --ok: #62c470; --warn: #f0b54a; --bad: #ff7a5c;
+  --disp-bg: #b1bd93; --disp-fg: #1f2a17;
+  --font-ui: "Space Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Space Mono", ui-monospace, "SF Mono", Menlo, "Cascadia Mono", Consolas, monospace;
+  --font-num: "Doto", ui-monospace, "SF Mono", Menlo, "Cascadia Mono", Consolas, monospace;
+  --pw: 112.64px;
+}
+html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+body { font: 13px/1.3 var(--font-ui); color: var(--chrome-fg); -webkit-font-smoothing: antialiased; -webkit-user-select: none; user-select: none; cursor: default; }
+* { box-sizing: border-box; }
+.i { width: 18px; height: 18px; flex: none; fill: currentColor; shape-rendering: crispEdges; }
+
+.stage { position: relative; width: 100vw; height: 100vh; }
+
+/* ───────── the pet ───────── */
+.petbox { position: absolute; width: var(--pw); aspect-ratio: 192 / 208; cursor: grab; touch-action: none; }
+.petbox.dragging { cursor: grabbing; }
+#sprite { width: 100%; height: 100%; image-rendering: pixelated; background-repeat: no-repeat; }
+body.shadow #sprite { filter: drop-shadow(0 4px 3px rgba(0, 0, 0, .34)); }
+#sprite.nopet { display: grid; place-items: center; }
+#sprite.nopet .i { width: 54px; height: 54px; color: var(--accent); filter: drop-shadow(0 3px 2px rgba(0, 0, 0, .35)); }
+
+/* the bell: shown while the pills are hidden, with the number of chats; the bell's colour is the most urgent
+   state (orange working, amber needs input, red blocked, green all done). Clicking it brings the pills back. */
+.badge {
+  all: unset; box-sizing: border-box; position: absolute; top: 2%; right: 0; height: 22px; padding: 0 8px 0 6px; border-radius: 99px;
+  display: flex; align-items: center; gap: 4px; cursor: pointer; font: 700 11px/1 var(--font-mono); color: var(--chrome-fg);
+  background: linear-gradient(to bottom, var(--chrome-hi), var(--chrome-bg)); box-shadow: 0 0 0 1px #000, 0 2px 0 #000, 0 4px 10px rgba(0, 0, 0, .3);
+}
+.badge[hidden] { display: none; }
+.badge .i { width: 9px; height: 9px; color: var(--accent); }
+.badge.warn .i { color: var(--warn); }
+.badge.bad .i { color: var(--bad); }
+.badge.ok .i { color: var(--ok); }
+.badge:hover { color: #fff; background: var(--chrome-hi); }
+.badge:active { transform: translateY(1px); box-shadow: 0 0 0 1px #000, 0 1px 0 #000; }
+
+/* hover keys: small dark B8 keys over the pet's feet */
+.tools {
+  position: absolute; left: 50%; bottom: 2px; transform: translateX(-50%); display: none; gap: 2px; padding: 3px;
+  border-radius: 12px; background: var(--chrome-bg); box-shadow: 0 0 0 1px #000, 0 2px 0 #000, 0 6px 14px rgba(0, 0, 0, .35);
+}
+.petbox.hover:not(.dragging) .tools { display: flex; }
+.tools button {
+  all: unset; width: 28px; height: 26px; display: grid; place-items: center; border-radius: 8px; color: var(--chrome-2); cursor: pointer;
+}
+.tools button .i { width: 18px; height: 18px; }
+.tools button:hover { background: rgba(255, 255, 255, .09); color: var(--accent); }
+.tools button:active { transform: translateY(1px); }
+.tools .sep { width: 1px; margin: 4px 1px; background: rgba(255, 255, 255, .12); }
+
+/* ───────── pills ───────── */
+.stack { position: absolute; display: flex; gap: 6px; pointer-events: none; }
+.stack.above { flex-direction: column-reverse; }
+.stack.below { flex-direction: column; }
+.stack.end { align-items: flex-end; }
+.stack.start { align-items: flex-start; }
+
+.pill {
+  pointer-events: auto; position: relative; flex: none; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; column-gap: 9px; align-items: center;
+  min-width: 190px; max-width: 100%; padding: 8px 12px 10px 10px; border-radius: 17px; cursor: pointer;
+  background: linear-gradient(to bottom, var(--chrome-hi), var(--chrome-bg) 70%); color: var(--chrome-fg);
+  box-shadow: 0 0 0 1px #000, 0 2px 0 #000, 0 8px 18px rgba(0, 0, 0, .32);
+}
+.pill .st { display: grid; place-items: center; width: 22px; height: 22px; align-self: center; }
+.pill.s-running .st { color: var(--accent); }
+.pill.s-waiting .st { color: var(--warn); }
+.pill.s-failed .st { color: var(--bad); }
+.pill.s-review .st { color: var(--ok); }
+.pill.s-idle .st { color: var(--chrome-3); }
+/* quarter turns keep the 9×9 pixels on the grid */
+.pill.s-running .st .i { animation: spin .9s steps(4) infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .pill.s-running .st .i { animation: none; } }
+
+.pill .tx { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
+.pill .t1 { display: flex; align-items: baseline; gap: 7px; min-width: 0; }
+.pill .ti { font-weight: 700; font-size: 13px; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.pill .lb { flex: none; font: 700 9.5px/1 var(--font-mono); text-transform: uppercase; letter-spacing: .07em; }
+.pill.s-waiting .lb { color: var(--warn); }
+.pill.s-review .lb { color: var(--ok); }
+/* finished chats: a green-tinted plate and a dimmer title, so the ones still working stand out */
+.pill.s-review { background: linear-gradient(to bottom, color-mix(in srgb, var(--ok) 16%, var(--chrome-hi)), color-mix(in srgb, var(--ok) 10%, var(--chrome-bg)) 70%); }
+.pill.s-review .ti { color: var(--chrome-2); }
+.pill.s-review .t2 { color: var(--chrome-3); }
+.pill.s-failed .lb { color: var(--bad); }
+.pill .t2 { font-size: 12.5px; color: var(--chrome-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pill .t3 { font: 700 9.5px/1.5 var(--font-mono); text-transform: uppercase; letter-spacing: .06em; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pill.exp .t2 { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+
+/* the LCD percentage chip */
+.pill .pc {
+  position: relative; padding: 3px 6px 2px; border-radius: 4px; overflow: hidden; align-self: center;
+  background: linear-gradient(170deg, color-mix(in srgb, #fff 18%, var(--disp-bg)), var(--disp-bg) 60%); color: var(--disp-fg);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, .3), 0 0 0 2px #000;
+  font: 800 calc(19px * .74)/1 var(--font-num); white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+.pill .pc small { font: 700 8px/1 var(--font-mono); margin-left: 1px; }
+.pill .bar { position: absolute; left: 14px; right: 14px; bottom: 4px; height: 2px; border-radius: 2px; background: rgba(255, 255, 255, .1); overflow: hidden; }
+.pill .bar i { display: block; height: 100%; background: var(--accent); }
+
+.pill .x {
+  all: unset; position: absolute; top: 4px; right: 5px; width: 18px; height: 18px; border-radius: 6px; display: none; place-items: center;
+  color: var(--chrome-3); background: var(--chrome-bg); cursor: pointer;
+}
+.pill .x .i { width: 9px; height: 9px; }
+.pill.hover .x, .pill:hover .x { display: grid; }
+.pill .x:hover { color: #fff; background: rgba(255, 255, 255, .12); }
+
+/* several chats: the front pill with up to two more peeking out behind it, on the side away from the pet */
+.deck { position: relative; isolation: isolate; flex: none; display: flex; max-width: 100%; pointer-events: none; }
+.deck .pill { flex: 1 1 auto; }
+.layer {
+  position: absolute; inset: 0 10px; z-index: -1; border-radius: 17px; pointer-events: auto; cursor: pointer;
+  background: linear-gradient(to bottom, #302c27, #24211d); box-shadow: 0 0 0 1px #000, 0 6px 14px rgba(0, 0, 0, .28);
+}
+.layer.l2 { inset: 0 20px; background: #1c1a17; }
+.stack.above .layer.l1 { transform: translateY(-7px); }
+.stack.above .layer.l2 { transform: translateY(-13px); }
+.stack.below .layer.l1 { transform: translateY(7px); }
+.stack.below .layer.l2 { transform: translateY(13px); }
+.pill .nn { flex: none; margin-left: auto; padding-left: 4px; font: 700 9.5px/1 var(--font-mono); letter-spacing: .04em; color: var(--chrome-3); }
+
+.more {
+  pointer-events: auto; flex: none; font: 700 10px/1 var(--font-mono); letter-spacing: .04em; color: var(--chrome-2); cursor: pointer;
+  padding: 5px 9px; border-radius: 99px; background: var(--chrome-bg); box-shadow: 0 0 0 1px #000, 0 2px 0 #000;
+}
+.more:hover { color: #fff; }

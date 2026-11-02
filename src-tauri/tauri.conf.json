@@ -1,0 +1,77 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Claude Companion",
+  "mainBinaryName": "claude-companion",
+  "version": "0.1.0",
+  "identifier": "io.github.imanimal.claude-companion",
+  "build": {
+    "frontendDist": "../ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "macOSPrivateApi": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Claude Companion",
+        "url": "index.html",
+        "width": 1180,
+        "height": 780,
+        "minWidth": 720,
+        "minHeight": 520,
+        "center": true,
+        "decorations": false,
+        "shadow": true,
+        "visible": false,
+        "dragDropEnabled": false
+      },
+      {
+        "label": "pet",
+        "create": false,
+        "title": "Claude Companion Pet",
+        "url": "pet.html",
+        "width": 340,
+        "height": 360,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "visible": false,
+        "shadow": false,
+        "focus": false,
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "DeveloperTool",
+    "shortDescription": "A Codex-compatible desktop pet for Claude sessions.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "signingIdentity": "-",
+      "minimumSystemVersion": "11.0"
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      },
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
+  }
+}

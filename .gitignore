@@ -1,0 +1,4 @@
+# Build output. CARGO_TARGET_DIR is usually C:/ct, but a plain cargo build lands here.
+/target/
+# Tauri regenerates these schemas on every build.
+/src-tauri/gen/schemas/
