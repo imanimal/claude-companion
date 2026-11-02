@@ -73,7 +73,13 @@ A Tauri 2 desktop pet that plays Codex pets 1:1 and shows Claude Code sessions i
   Rust side) and never writes it; dismissals live in our settings. Its selection rules mirror Collegiapp's model
   (`crates/collegiapp-core/src/model.rs`: scheduled kinds, `is_open`, course colours). Countdowns always sit
   behind the Claude chats.
+- **Codex is read-only too.** `codex.rs` pulls the pets Codex keeps in the ChatGPT account from files Codex
+  already has here (its state file, HTTP cache and session logs). It never writes them, goes online or uses
+  Codex's sign-in. Settings `codexPets` maps each cloud pet to its folder and art, so a pet already here is
+  linked rather than copied, and a pulled pet deleted here stays deleted.
 - `pets.rs` writes atomically, and the first save of a pet each run backs it up to `.companion-backup/<unix>/`.
+  Deleting a pet moves its folder to `<pets>/.companion-trash/<unix ms>-<id>/`, which both apps skip; only the
+  Deleted panel's Empty removes anything for good.
 
 ## Commands
 

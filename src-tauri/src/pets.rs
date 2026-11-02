@@ -4,6 +4,7 @@
 //! Unknown manifest fields (spriteVersionNumber, rowFrames, kind, other editors' keys) are kept on save.
 //! Our own extras live under "claudeCompanion" (per-frame timing, the drag tilt), which Codex ignores.
 //! The first save of a pet in a run copies the originals to <id>/.companion-backup/<unix time>/.
+//! Deleting moves the whole folder into the trash (`trash_dir`), from where it can be restored.
 
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -159,13 +160,26 @@ fn backup(folder: &Path, sheet: &str) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Writes an edited pet: the sheet as spritesheet.png and the manifest (pointing at it).
-/// `backup_first` copies the current files aside before anything is overwritten.
-pub fn save(id: &str, manifest: &Value, png: &[u8], backup_first: bool) -> Result<PetInfo, String> {
-    let cur = read(id).ok_or("That pet folder is gone")?;
-    if image_size_of(png).is_none() {
-        return Err("The spritesheet isn't a PNG".into());
+/// "png" or "webp", from the file's magic bytes.
+pub fn sheet_ext(b: &[u8]) -> Option<&'static str> {
+    if b.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("png")
+    } else if b.len() >= 12 && &b[..4] == b"RIFF" && &b[8..12] == b"WEBP" {
+        Some("webp")
+    } else {
+        None
     }
+}
+
+/// Writes an edited pet (or new art from Codex, codex.rs): the sheet as spritesheet.png (.webp for a WebP)
+/// and the manifest (pointing at it). `backup_first` copies the current files aside before anything is
+/// overwritten.
+pub fn save(id: &str, manifest: &Value, sheet: &[u8], backup_first: bool) -> Result<PetInfo, String> {
+    let cur = read(id).ok_or("That pet folder is gone")?;
+    let file = match (sheet_ext(sheet), image_size_of(sheet)) {
+        (Some(ext), Some(_)) => format!("spritesheet.{ext}"),
+        _ => return Err("The spritesheet isn't a PNG or WebP image".into()),
+    };
     let folder = pets_dir().join(id);
     if backup_first {
         backup(&folder, &cur.sheet).map_err(|e| format!("Couldn't back up the pet: {e}"))?;
@@ -175,11 +189,11 @@ pub fn save(id: &str, manifest: &Value, png: &[u8], backup_first: bool) -> Resul
         m = json!({});
     }
     m["id"] = json!(id);
-    m["spritesheetPath"] = json!("spritesheet.png");
-    write_atomic(&folder.join("spritesheet.png"), png).map_err(|e| e.to_string())?;
+    m["spritesheetPath"] = json!(file);
+    write_atomic(&folder.join(&file), sheet).map_err(|e| e.to_string())?;
     let text = serde_json::to_string_pretty(&m).map_err(|e| e.to_string())? + "\n";
     write_atomic(&folder.join("pet.json"), text.as_bytes()).map_err(|e| e.to_string())?;
-    if cur.sheet != "spritesheet.png" {
+    if cur.sheet != file {
         // the old sheet is in the backup (or the user said not to keep one); Codex reads spritesheetPath
         let _ = std::fs::remove_file(folder.join(&cur.sheet));
     }
@@ -231,6 +245,94 @@ pub fn create(name: &str, manifest: &Value, sheet: &[u8], ext: &str) -> Result<P
     read(&id).ok_or_else(|| "Created, but the pet couldn't be read back".into())
 }
 
+/// Deleted pets wait in `<pets>/.companion-trash/<unix ms>-<id>/`, out of both apps' lists (dot folders are
+/// skipped, and Codex reads only `<pets>/<id>/pet.json`), until restored or the trash is emptied.
+pub fn trash_dir() -> PathBuf {
+    pets_dir().join(".companion-trash")
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Deleted {
+    /// its folder in the trash
+    pub key: String,
+    pub id: String,
+    pub display_name: String,
+    /// when it was deleted, unix ms
+    pub at: u64,
+}
+
+/// A trash folder's time and pet id, when it is one ("<unix ms>-<id>", so never a path).
+fn trash_key(key: &str) -> Option<(u64, &str)> {
+    let (at, id) = key.split_once('-')?;
+    Some((at.parse().ok()?, id)).filter(|_| valid_id(id))
+}
+
+/// Moves a pet into the trash.
+pub fn delete(id: &str) -> Result<Deleted, String> {
+    let p = read(id).ok_or("That pet folder is gone")?;
+    let at = std::time::SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+    let key = format!("{at}-{id}");
+    std::fs::create_dir_all(trash_dir()).map_err(|e| e.to_string())?;
+    std::fs::rename(pets_dir().join(id), trash_dir().join(&key))
+        .map_err(|e| format!("Couldn't move the pet to the trash ({e}). Is its folder open somewhere?"))?;
+    Ok(Deleted { key, id: id.to_string(), display_name: p.display_name, at })
+}
+
+/// The trash, newest first.
+pub fn deleted() -> Vec<Deleted> {
+    let mut out: Vec<Deleted> = std::fs::read_dir(trash_dir())
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let key = e.file_name().to_string_lossy().to_string();
+            let (at, id) = trash_key(&key)?;
+            let m: Value = std::fs::read_to_string(e.path().join("pet.json"))
+                .ok()
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or_default();
+            let display_name = m["displayName"].as_str().unwrap_or(id).to_string();
+            Some(Deleted { id: id.to_string(), display_name, at, key })
+        })
+        .collect();
+    out.sort_by(|a, b| b.at.cmp(&a.at));
+    out
+}
+
+/// Puts a deleted pet back in its folder, or under the next free name (its manifest's id follows).
+pub fn restore(key: &str) -> Result<PetInfo, String> {
+    let (_, id) = trash_key(key).ok_or("That isn't a deleted pet")?;
+    let from = trash_dir().join(key);
+    if !from.is_dir() {
+        return Err("That pet isn't in the trash any more".into());
+    }
+    let root = pets_dir();
+    let (mut to, mut n) = (id.to_string(), 2);
+    while root.join(&to).exists() {
+        to = format!("{id}-{n}");
+        n += 1;
+    }
+    std::fs::rename(&from, root.join(&to)).map_err(|e| format!("Couldn't restore the pet: {e}"))?;
+    let manifest = root.join(&to).join("pet.json");
+    if to != id {
+        if let Some(mut m) = std::fs::read_to_string(&manifest).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()) {
+            m["id"] = json!(to);
+            let text = serde_json::to_string_pretty(&m).map_err(|e| e.to_string())? + "\n";
+            write_atomic(&manifest, text.as_bytes()).map_err(|e| e.to_string())?;
+        }
+    }
+    read(&to).ok_or_else(|| "Restored, but the pet couldn't be read back".into())
+}
+
+/// Deletes everything in the trash for good.
+pub fn empty_trash() -> Result<(), String> {
+    match std::fs::remove_dir_all(trash_dir()) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(format!("Couldn't empty the trash: {e}")),
+        _ => Ok(()),
+    }
+}
+
 /// Serves `pet://localhost/<id>/<file>` (http://pet.localhost/… on Windows) from the pets dir.
 pub fn serve(path: &str) -> (u16, &'static str, Vec<u8>) {
     let parts: Vec<String> = path
@@ -268,6 +370,9 @@ mod tests {
         assert!(!valid_id("a/b"));
         assert_eq!(slug("Casual Scarlet (copy)"), "casual-scarlet-copy");
         assert_eq!(slug("简杜"), "简杜");
+        assert_eq!(trash_key("1793620000000-karin-2"), Some((1_793_620_000_000, "karin-2")));
+        assert_eq!(trash_key("1793620000000-../x"), None);
+        assert_eq!(trash_key("karin"), None);
     }
 
     #[test]

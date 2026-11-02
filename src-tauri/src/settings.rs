@@ -3,6 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -44,6 +45,10 @@ pub struct Settings {
     pub countdowns: bool,
     /// Countdowns dismissed from the pet, as "<item id>@<unix ms>", so a moved class or deadline comes back.
     pub countdowns_hidden: Vec<String>,
+    /// Pull the pets Codex keeps in the ChatGPT account into the pets folder (codex.rs).
+    pub codex_sync: bool,
+    /// Codex's cloud pets pulled or linked so far: cloud id → the folder here and its art.
+    pub codex_pets: BTreeMap<String, crate::codex::Link>,
 }
 
 impl Default for Settings {
@@ -68,6 +73,8 @@ impl Default for Settings {
             autostart_init: false,
             countdowns: true,
             countdowns_hidden: Vec::new(),
+            codex_sync: true,
+            codex_pets: BTreeMap::new(),
         }
     }
 }
@@ -148,6 +155,7 @@ mod tests {
         let s: Settings = serde_json::from_str("{}").unwrap();
         assert_eq!((s.theme.as_str(), s.night_theme.as_str(), s.night.as_str()), ("claude", "claude-dark", "auto"));
         assert_eq!(s.active_pet, None);
+        assert!(s.codex_sync && s.codex_pets.is_empty());
     }
 
     #[test]

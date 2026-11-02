@@ -1,13 +1,14 @@
 /* Claude Companion main window: the top bar (it's the title bar), the program keys and four views.
-   - Pets: the Codex pets folder as cards with live idle previews; use, edit, duplicate, import (files, a pet
-     folder, or a dropped PNG/WebP sheet) and a big preview that plays each state like Codex.
+   - Pets: the Codex pets folder as cards with live idle previews; use, edit, duplicate, delete (to the trash, with
+     a Deleted panel to restore from), import (files, a pet folder, or a dropped PNG/WebP sheet) and a big preview
+     that plays each state like Codex.
    - Editor: editor.js.
    - Claude: the hook bridge, installing the Claude Code hooks and the progress memory, live sessions, test keys.
-   - Settings: the pet on the desktop, the app and its updates, and the theme browser (themes.js): switching at night
+   - Settings: the pet on the desktop, the app (pulling pets from Codex, updates), and the theme browser (themes.js): switching at night
      with its Day and Night slots, built-in and imported themes as cards, import a file or pasted JSON, export, make
      one with a chatbot.
    Rust events: "pets" (a pet changed), "settings", "sessions", "nav" (open a view), "edit-pet" (open the editor),
-   "update-available", "update-progress" and "update-check" (updater.rs). */
+   "codex" (a pull of Codex's cloud pets, codex.rs), "update-available", "update-progress" and "update-check" (updater.rs). */
 (function () {
   const { $, $$, esc, ic, invoke, on, toast, fail } = CC;
   const SP = CC.sprite, TH = CC.themes;
@@ -25,7 +26,7 @@
     ["codex-custom-pets", "https://github.com/webkubor/codex-custom-pets"],
     ["Show us your pet", "https://community.openai.com/t/show-us-your-custom-codex-pet/1387591"],
   ];
-  const A = { view: "pets", pets: [], set: {}, sessions: [], claude: null, memory: "", auto: null, folder: "", showMem: false, big: "idle",
+  const A = { view: "pets", pets: [], deleted: [], set: {}, sessions: [], claude: null, memory: "", auto: null, folder: "", showMem: false, big: "idle",
     version: "", update: null, checking: false, paste: "", gen: { idea: "", reply: "", read: null }, slot: null, flash: null };
   const top = $("#top"), view = $("#view");
   let players = [];
@@ -76,6 +77,8 @@
   }
 
   /* ───────── pets ───────── */
+  // pets pulled from Codex (codex.rs), which can take Codex's art again
+  const fromCodex = (id) => A.set.codexSync && Object.values(A.set.codexPets || {}).some((l) => l.pet === id);
   function cardHtml(p) {
     const m = SP.model(p), onDesk = p.id === A.set.activePet;
     const tags = (m.valid ? `<span class="tag">v${m.version}</span>` : `<span class="tag bad" title="Codex needs 1536×1872 or 1536×2288">${p.width}×${p.height}</span>`) +
@@ -90,6 +93,8 @@
         <button class="btn sm" data-act="edit">${ic("edit")} Edit</button>
         <button class="btn sm icon" data-act="dup" title="Duplicate" aria-label="Duplicate">${ic("copy")}</button>
         <button class="btn sm icon" data-act="reveal" title="Show in folder" aria-label="Show in folder">${ic("folder")}</button>
+        ${fromCodex(p.id) ? `<button class="btn sm icon" data-act="codex-update" title="Update from Codex" aria-label="Update from Codex">${ic("down")}</button>` : ""}
+        <button class="btn sm icon" data-act="del" title="Delete" aria-label="Delete">${ic("trash")}</button>
       </div>
     </article>`;
   }
@@ -124,6 +129,12 @@
             <p class="note">Codex and Claude Companion share this folder, so pets added here show up in Codex too.</p>
           </div>
         </section>
+        ${A.deleted.length ? `<section class="panel">
+          <div class="ph"><span class="pt">${ic("trash")} Deleted</span><span class="cnt">${A.deleted.length}</span><span class="sp"></span>
+            <button class="btn ghost sm" data-act="trash-empty">Empty</button></div>
+          <div class="pb">${A.deleted.map((d) => `<div class="srow2">${ic("pets")}<div class="st"><b>${esc(d.displayName)}</b><span>Deleted ${esc(CC.ago(d.at))}</span></div>
+            <button class="btn sm" data-act="restore" data-key="${esc(d.key)}">${ic("undo")} Restore</button></div>`).join("")}</div>
+        </section>` : ""}
       </div>
     </div>`;
     view.querySelectorAll(".sprite[data-pet]").forEach((el) => {
@@ -136,10 +147,11 @@
 
   // quiet: the window came back, so redraw only if the folder changed (pets added or edited by Codex or by hand)
   async function loadPets(quiet) {
-    let list = A.pets;
-    try { list = await invoke("list_pets"); } catch (e) { /* web preview */ }
-    if (quiet === true && JSON.stringify(list) === JSON.stringify(A.pets)) return;
+    let list = A.pets, gone = A.deleted;
+    try { [list, gone] = await Promise.all([invoke("list_pets"), invoke("deleted_pets")]); } catch (e) { /* web preview */ }
+    if (quiet === true && JSON.stringify([list, gone]) === JSON.stringify([A.pets, A.deleted])) return;
     A.pets = list;
+    A.deleted = gone;
     if (A.view === "pets") drawPets();
     CC.editor.petsChanged();
   }
@@ -225,6 +237,19 @@
       await loadPets();
       toast(`Made ${info.displayName}`, { action: "Edit", onAction: () => editPet(info.id) });
     } catch (e) { fail(e); }
+  }
+  // deleted pets go to the trash (pets.rs), so a delete needs no asking; emptying it does, with a second click
+  function restorePet(key) {
+    invoke("restore_pet", { key }).then((p) => toast(`Restored ${p.displayName}`), fail);
+  }
+  function emptyTrash(b) {
+    if (!b.dataset.sure) {
+      b.dataset.sure = "1";
+      b.textContent = `Delete ${A.deleted.length === 1 ? "it" : `all ${A.deleted.length}`} for good?`;
+      setTimeout(() => { if (b.isConnected) { delete b.dataset.sure; b.textContent = "Empty"; } }, 4000);
+      return;
+    }
+    invoke("empty_trash").then(() => toast("Trash emptied"), fail);
   }
   function editPet(id) {
     CC.editor.edit(id);
@@ -331,6 +356,7 @@
       <section class="panel"><div class="ph"><span class="pt">${ic("gear")} App</span></div><div class="pb"><div class="fgrid">
         <label>Startup</label><div><label class="check"><input type="checkbox" data-auto${A.auto ? " checked" : ""}> Start with ${CC.mac ? "macOS" : "Windows"}, pet only</label></div>
         <label>Pets folder</label><div><div class="path">${esc(A.folder)}</div><button class="btn sm" data-act="folder" style="margin-top:.4em">${ic("folder")} Show folder</button></div>
+        <label>Codex</label><div>${chk("codexSync", "Pull my pets from Codex")}<div class="note" style="margin-top:.35em">Codex keeps the pets you make in your ChatGPT account, not in this folder. This copies them in from Codex's own files on this computer and brings new art over when a pet changes. Nothing is downloaded.</div><div class="note" id="codexStatus" style="margin-top:.35em"></div>${A.set.codexSync ? `<button class="btn sm" data-act="codex-pull" style="margin-top:.4em">${ic("down")} Pull now</button>` : ""}</div>
         <label>Updates</label><div><div class="note" id="updStatus">${esc(updateStatus())}</div><div class="actions" style="margin-top:.4em">
           ${A.update ? `<button class="btn sm primary" data-act="update-install">${ic("down")} Install ${esc(A.update.version)}</button>` : ""}<button class="btn sm" data-act="update-check">Check for updates</button></div></div>
       </div></div></section>
@@ -338,6 +364,27 @@
     </div>`;
     $(".cols.settings").scrollTop = keep;
     drawCountdownStatus();
+    drawCodexStatus();
+  }
+  async function drawCodexStatus() {
+    const st = await invoke("codex_status").catch(() => null);
+    const el = $("#codexStatus");
+    if (!el) return;
+    const n = st ? st.cloud : 0;
+    el.innerHTML = !A.set.codexSync || !st ? "" :
+      !st.found ? `Codex isn't on this computer yet. Looking for <span class="path">${esc(st.path)}</span>` :
+      st.error ? `Couldn't pull from Codex: ${esc(st.error)}` :
+      !n ? "No pets in your Codex account yet." :
+      st.waiting ? `${st.waiting} of your ${n} Codex pets will come over once Codex has shown them.` :
+      `Up to date with the ${n} ${n === 1 ? "pet" : "pets"} in your Codex account.`;
+  }
+  // a pull that added or redrew pets says which
+  function onCodex(st) {
+    if (A.view === "settings") drawCodexStatus();
+    const names = (st && st.pulled) || [];
+    if (!names.length) return;
+    const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+    toast(`From Codex: ${list}`);
   }
   async function drawCountdownStatus() {
     const st = await invoke("countdown_status").catch(() => null);
@@ -537,6 +584,9 @@
       use: () => setSettings({ activePet: id }),
       edit: () => editPet(id),
       dup: () => duplicate(id),
+      del: () => invoke("delete_pet", { id }).then((d) => toast(`Deleted ${d.displayName}`, { action: "Undo", onAction: () => restorePet(d.key) }), fail),
+      restore: () => restorePet(b.dataset.key),
+      "trash-empty": () => emptyTrash(b),
       reveal: () => invoke("reveal", { path: (A.pets.find((p) => p.id === id) || {}).folder || A.folder }).catch(fail),
       folder: () => invoke("reveal", { path: A.folder }).catch(fail),
       import: () => $("#importFile").click(),
@@ -549,6 +599,8 @@
       "reset-pos": () => setSettings({ petX: null, petY: null }),
       "size-codex": () => setSettings({ petScale: 1 }),
       "cd-preview": () => invoke("preview_countdowns").then(() => toast("Two sample countdowns are on the pet for a minute, behind any Claude chats"), fail),
+      "codex-pull": () => invoke("pull_codex").catch(fail),
+      "codex-update": () => invoke("update_from_codex", { id }).then((msg) => msg && toast(msg), fail),
       "theme-use": () => useTheme(id),
       "theme-del": () => delTheme(id),
       "theme-export": exportTheme,
@@ -664,6 +716,7 @@
     window.addEventListener("focus", () => loadPets(true));
     on("settings", applySettings);
     on("countdowns", () => { if (A.view === "settings") drawCountdownStatus(); });
+    on("codex", onCodex);
     on("update-available", onUpdate);
     on("update-progress", onUpdateProgress);
     on("update-check", checkUpdate);

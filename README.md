@@ -15,6 +15,15 @@ and plain Standard themes are a click away.
   - other states play three times, then settle into idle;
   - hovering makes the pet jump, dragging makes it run left or right;
   - v2 pets look toward the cursor.
+- **Pets from Codex.** Codex keeps the pets you make with its Pets plugin in your ChatGPT account, not in
+  `~/.codex/pets`. The app pulls them into the folder by itself from Codex's own files on this computer (the pet
+  list, its image cache and the names in its session logs), with nothing downloaded and no sign-in:
+  - a pet already in the folder is matched up instead of copied twice, and gets Codex's art unless its sheet
+    is already that art or an edit of it;
+  - new art for a pet replaces its sheet, after a backup;
+  - a pulled pet you delete stays deleted.
+  Settings → Codex has the switch and a "Pull now" button, and each pulled pet's card has "Update from Codex",
+  which takes Codex's art again (even over an edit).
 - **Out of the way.** On Windows the pet hides while an app is fullscreen on its screen (a video, a game, a
   slideshow) and comes back when it ends. Settings has the switch.
 - **Session pills.**
@@ -35,6 +44,9 @@ and plain Standard themes are a click away.
   - Claude chats always come first, so countdowns are in front only while Claude has nothing to show.
   - The clock turns amber 10 minutes before a class or an hour before a deadline, and the pet waves.
   - Click one to open Collegiapp; the x hides it until it moves. Settings has the switch.
+- **Delete and restore.** A pet card's trash button moves the pet into `.companion-trash` in the pets folder,
+  out of both apps' lists. Undo it from the toast, or restore it later from the Pets view's Deleted panel
+  (whose Empty, clicked twice, deletes for good).
 - **Spritesheet editor.**
   - Drag frames to reorder them or move them between rows; Shift+drag swaps two frames, Ctrl+drag copies.
   - Flip, nudge, copy and paste (including images from other apps), duplicate and clear frames.
@@ -75,8 +87,9 @@ On Linux, the `.AppImage` (it updates itself), `.deb` or `.rpm`. Installed copie
 
 1. **Add a pet.** The Pets view starts empty, and the desktop shows a paw until you pick one. Drop a Codex pet
    folder, its `pet.json` with the sheet, or just a 1536×1872 or 1536×2288 PNG or WebP sheet on the window, or use
-   Import. Pets you already have in Codex show up by themselves, since both apps share `~/.codex/pets`. The
-   [sources](#pet-sources) below have plenty to choose from.
+   Import. Pets you already have in Codex show up by themselves: both apps share `~/.codex/pets`, and the ones
+   Codex keeps in your ChatGPT account are pulled in (Settings → Codex). The [sources](#pet-sources) below have
+   plenty to choose from.
 2. **Connect Claude Code.** Open the Claude view and install the hooks and the progress note (or run `setup`,
    below). New Claude Code sessions show up on the pet.
 3. **Pick a look.** Settings → Themes, if Claude's own isn't for you.
@@ -116,6 +129,7 @@ cargo test -p claude-companion --lib
 | `updater.rs` | Signed self-updates from GitHub Releases' `latest.json`: checks, announces (`update-available`, the tray item) and installs when asked. |
 | `ui/js/themes.js` | The shared Pocket theme format: built-ins, import (files, pasted JSON, chatbot replies), contrast checks and fixes, and the mapping onto the window's CSS variables. |
 | `collegiapp.rs` | Reads Collegiapp's store every 15 s (parsing it only when it changed) and picks the classes and deadlines worth a pill. It never writes to Collegiapp's files. |
+| `codex.rs` | Pulls Codex's cloud pets when its state file changes: the list from `.codex-global-state.json`, the sheets from Codex's HTTP cache (Chromium's blockfile or simple cache) and the names from its session logs. It never writes to Codex's files or goes online. |
 | `ui/pet.html` + `ui/js/pet.js` | The transparent, click-through overlay. Rust polls the cursor against the hit areas that the page reports. |
 | `ui/index.html` | The library, the editor, the Claude setup view and Settings. |
 

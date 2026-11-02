@@ -6,7 +6,8 @@
 //! - "sessions" (Vec<Session>)  whenever what the pet shows changes
 //! - "countdowns" (Vec<Countdown>) Collegiapp's classes and deadlines worth a pill (collegiapp.rs)
 //! - "settings" (Settings)      after every change
-//! - "pets"                     after a pet is written (the library and the pet reload)
+//! - "pets"                     after a pet is written, deleted or restored (the library and the pet reload)
+//! - "codex" (Status)           (to main) after each pull of Codex's cloud pets (codex.rs)
 //! - "nav" / "edit-pet"         (to main) open a view / a pet in the editor
 //! - "cursor" / "hover"         (to pet) from the overlay poll
 //! - "drag-move" ([x, y, vx, vy]) (to pet) the dragged window's eased position and velocity, physical px
@@ -15,6 +16,7 @@
 
 mod bridge;
 mod claude;
+mod codex;
 mod collegiapp;
 #[cfg(windows)]
 mod fullscreen;
@@ -42,6 +44,9 @@ use sessions::Sessions;
 pub struct App {
     sessions: Mutex<Sessions>,
     countdowns: Mutex<collegiapp::Reader>,
+    /// held through a pull, so the loop and "Pull now" never import a pet twice
+    codex: Mutex<codex::Reader>,
+    codex_status: Mutex<Option<codex::Status>>,
     settings: Mutex<settings::Store>,
     /// "" while listening, else why the bridge couldn't start
     bridge_error: Mutex<String>,
@@ -72,6 +77,48 @@ fn refresh_countdowns(app: &AppHandle) {
     if c.refresh(now_ms() as i64, on, &hidden) {
         let _ = app.emit("countdowns", c.list());
     }
+}
+
+/// Pulls Codex's cloud pets (codex.rs) when its state changed, while some wait for their art, or `now`.
+/// `redo` is a pet folder to compare with Codex's art again, as if it had never been pulled.
+fn refresh_codex(app: &AppHandle, now: bool, redo: Option<&str>) {
+    let st = app.state::<App>();
+    let Ok(mut r) = st.codex.lock() else { return };
+    let Some((on, mut links)) = st.settings.lock().ok().map(|s| (s.data.codex_sync, s.data.codex_pets.clone())) else {
+        return;
+    };
+    if !on {
+        *r = codex::Reader::default();
+        if let Ok(mut s) = st.codex_status.lock() {
+            *s = None;
+        }
+        return;
+    }
+    if !r.due(now) {
+        return;
+    }
+    let before = links.clone();
+    links.values_mut().filter(|l| Some(l.pet.as_str()) == redo).for_each(|l| l.art.clear());
+    let status = r.pull(&mut links);
+    if links != before {
+        if let Ok(mut s) = st.settings.lock() {
+            s.data.codex_pets = links;
+            // a first pet for an empty desktop
+            if s.data.active_pet.as_deref().and_then(pets::read).is_none() && !status.ids.is_empty() {
+                s.data.active_pet = status.ids.first().cloned();
+            }
+            s.save();
+        }
+        emit_settings(app);
+    }
+    drop(r);
+    for id in &status.ids {
+        let _ = app.emit("pets", id);
+    }
+    let _ = app.emit("codex", &status);
+    if let Ok(mut s) = st.codex_status.lock() {
+        *s = Some(status);
+    };
 }
 
 fn emit_settings(app: &AppHandle) {
@@ -148,6 +195,54 @@ fn pets_folder() -> String {
     d.to_string_lossy().to_string()
 }
 
+/// A pet card's delete: into the trash (pets::delete). The desktop moves on to another pet if it was this one.
+#[tauri::command]
+fn delete_pet(app: AppHandle, id: String) -> Result<pets::Deleted, String> {
+    let gone = pets::delete(&id)?;
+    if let Ok(mut s) = app.state::<App>().settings.lock() {
+        if s.data.active_pet.as_deref() == Some(id.as_str()) {
+            s.data.active_pet = pets::list().first().map(|p| p.id.clone());
+            s.save();
+        }
+    }
+    emit_settings(&app);
+    let _ = app.emit("pets", &id);
+    Ok(gone)
+}
+
+#[tauri::command]
+fn deleted_pets() -> Vec<pets::Deleted> {
+    pets::deleted()
+}
+
+/// Brings a pet back from the trash. Under the pull's lock, so a pull can't link Codex's pet to the old
+/// folder name when the pet comes back under another.
+#[tauri::command]
+fn restore_pet(app: AppHandle, key: String) -> Result<pets::PetInfo, String> {
+    let st = app.state::<App>();
+    let _pull = st.codex.lock().map_err(|e| e.to_string())?;
+    let p = pets::restore(&key)?;
+    let was = key.split_once('-').map_or("", |(_, id)| id);
+    if let Ok(mut s) = st.settings.lock() {
+        s.data.codex_pets.values_mut().filter(|l| p.id != was && l.pet == was).for_each(|l| l.pet = p.id.clone());
+        if s.data.active_pet.as_deref().and_then(pets::read).is_none() {
+            s.data.active_pet = Some(p.id.clone());
+        }
+        s.save();
+    }
+    emit_settings(&app);
+    let _ = app.emit("pets", &p.id);
+    Ok(p)
+}
+
+/// The Deleted panel's "Empty": the trash goes for good.
+#[tauri::command]
+fn empty_trash(app: AppHandle) -> Result<(), String> {
+    pets::empty_trash()?;
+    let _ = app.emit("pets", "");
+    Ok(())
+}
+
 /// Raw body: u32 LE length of a JSON header, the header, then the image bytes.
 /// Header: {"mode":"save","id","manifest","backup"} or {"mode":"create","name","manifest","ext"}.
 #[tauri::command]
@@ -184,11 +279,11 @@ fn get_settings(state: tauri::State<App>) -> settings::Settings {
 #[tauri::command]
 fn set_settings(app: AppHandle, patch: Value) -> Result<settings::Settings, String> {
     let st = app.state::<App>();
-    let (vis_before, data) = {
+    let (vis_before, sync_before, data) = {
         let mut s = st.settings.lock().map_err(|e| e.to_string())?;
-        let before = s.data.pet_visible;
+        let before = (s.data.pet_visible, s.data.codex_sync);
         s.patch(&patch)?;
-        (before, s.data.clone())
+        (before.0, before.1, s.data.clone())
     };
     if data.pet_visible != vis_before {
         set_pet_visible(&app, data.pet_visible);
@@ -196,7 +291,39 @@ fn set_settings(app: AppHandle, patch: Value) -> Result<settings::Settings, Stri
         emit_settings(&app);
     }
     refresh_countdowns(&app);
+    if data.codex_sync != sync_before {
+        let h = app.clone();
+        std::thread::spawn(move || refresh_codex(&h, true, None));
+    }
     Ok(data)
+}
+
+#[tauri::command]
+fn codex_status(state: tauri::State<App>) -> Option<codex::Status> {
+    state.codex_status.lock().ok().and_then(|s| s.clone())
+}
+
+/// Settings' "Pull now"; the result comes as a "codex" event.
+#[tauri::command]
+fn pull_codex(app: AppHandle) {
+    std::thread::spawn(move || refresh_codex(&app, true, None));
+}
+
+/// A pet card's "Update from Codex": Codex's current art for that pet, even over an edit made here. A pull
+/// that redraws it says so with the "codex" event; otherwise this says why nothing came over.
+#[tauri::command]
+async fn update_from_codex(app: AppHandle, id: String) -> String {
+    refresh_codex(&app, true, Some(&id));
+    let st = app.state::<App>();
+    let status = st.codex_status.lock().ok().and_then(|s| s.clone()).unwrap_or_default();
+    let art = st.settings.lock().ok().and_then(|s| s.data.codex_pets.values().find(|l| l.pet == id).map(|l| l.art.clone()));
+    match (status.ids.contains(&id), status.error, art.as_deref()) {
+        (true, _, _) => String::new(),
+        (_, Some(e), _) => format!("Couldn't pull from Codex: {e}"),
+        (_, _, None) => "This pet didn't come from Codex".into(),
+        (_, _, Some("")) => "Codex hasn't downloaded this pet's art yet. It comes over once Codex has shown it.".into(),
+        _ => "Already the same as in Codex".into(),
+    }
 }
 
 #[tauri::command]
@@ -433,9 +560,16 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_pets,
             pets_folder,
+            delete_pet,
+            deleted_pets,
+            restore_pet,
+            empty_trash,
             write_pet,
             get_settings,
             set_settings,
+            codex_status,
+            pull_codex,
+            update_from_codex,
             get_sessions,
             dismiss,
             get_countdowns,
@@ -490,6 +624,8 @@ pub fn run() {
             app.manage(App {
                 sessions: Mutex::new(Sessions::default()),
                 countdowns: Mutex::new(collegiapp::Reader::default()),
+                codex: Mutex::new(codex::Reader::default()),
+                codex_status: Mutex::new(None),
                 settings: Mutex::new(store),
                 bridge_error: Mutex::new(String::new()),
                 last_event: Mutex::new(0),
@@ -524,6 +660,11 @@ pub fn run() {
             std::thread::spawn(move || loop {
                 refresh_countdowns(&h4);
                 std::thread::sleep(collegiapp::TICK);
+            });
+            let h5 = h.clone();
+            std::thread::spawn(move || loop {
+                refresh_codex(&h5, false, None);
+                std::thread::sleep(codex::TICK);
             });
 
             overlay::create(&h, pet_visible)?;
