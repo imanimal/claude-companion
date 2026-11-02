@@ -1,12 +1,15 @@
 /* The pet overlay: the sprite with a simple drop shadow, a stack of session pills above or below it (pet.js
    picks the side from where the pet sits on screen), hover keys and a count badge. The window is transparent
-   and click-through outside these parts. Pills are the Pocket island: graphite plastic in any palette, an
-   orange progress line, an LCD chip for the percentage, 9×9 status icons. */
+   and click-through outside these parts. Pills are the Pocket island: graphite plastic, an orange progress
+   line, an LCD chip for the percentage, 9×9 status icons. These are Pocket Cream's values; pet.js paints the
+   theme in use over them (themes.js pills()), and Standard themes get the flat cards at the end of this file. */
 
 :root {
   --chrome-bg: #2a2722; --chrome-hi: #38342e; --chrome-fg: #f6f3ec; --chrome-2: #c9c2b4; --chrome-3: #9b9486;
   --accent: #ff5b1f; --on-accent: #1b1915; --ok: #62c470; --warn: #f0b54a; --bad: #ff7a5c;
-  --disp-bg: #b1bd93; --disp-fg: #1f2a17;
+  --disp-bg: #b1bd93; --disp-fg: #1f2a17; --disp-hot: #f0b54a; --disp-hot-fg: #2a1a00;
+  /* course colours: Collegiapp's Night k1–k6, which read on graphite */
+  --k1: #7aa5ff; --k2: #ff7a3d; --k3: #4fbf86; --k4: #d77bd0; --k5: #e3a640; --k6: #a39c8d;
   --font-ui: "Space Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   --font-mono: "Space Mono", ui-monospace, "SF Mono", Menlo, "Cascadia Mono", Consolas, monospace;
   --font-num: "Doto", ui-monospace, "SF Mono", Menlo, "Cascadia Mono", Consolas, monospace;
@@ -22,8 +25,11 @@ body { font: 13px/1.3 var(--font-ui); color: var(--chrome-fg); -webkit-font-smoo
 /* ───────── the pet ───────── */
 .petbox { position: absolute; width: var(--pw); aspect-ratio: 192 / 208; cursor: grab; touch-action: none; }
 .petbox.dragging { cursor: grabbing; }
-#sprite { width: 100%; height: 100%; image-rendering: pixelated; background-repeat: no-repeat; }
+/* pet.js pops the art from about where the feet stand when it switches animation */
+#sprite { width: 100%; height: 100%; image-rendering: pixelated; background-repeat: no-repeat; transform-origin: 50% 92%; }
 body.shadow #sprite { filter: drop-shadow(0 4px 3px rgba(0, 0, 0, .34)); }
+/* the pet is shown smaller than its 192 × 208 cells and at odd scales, where pixelated stair-steps */
+body.smooth #sprite { image-rendering: auto; }
 #sprite.nopet { display: grid; place-items: center; }
 #sprite.nopet .i { width: 54px; height: 54px; color: var(--accent); filter: drop-shadow(0 3px 2px rgba(0, 0, 0, .35)); }
 
@@ -42,19 +48,40 @@ body.shadow #sprite { filter: drop-shadow(0 4px 3px rgba(0, 0, 0, .34)); }
 .badge:hover { color: #fff; background: var(--chrome-hi); }
 .badge:active { transform: translateY(1px); box-shadow: 0 0 0 1px #000, 0 1px 0 #000; }
 
-/* hover keys: small dark B8 keys over the pet's feet */
+/* hover keys: small dark B8 keys in the band just under the pet (over its head when the pills hang below, see
+   pet.js KEYS). On hover they spring out of the pet, each key a beat after the last; a key hops under the
+   cursor and dips when pressed; they tuck back in when the cursor leaves. */
 .tools {
-  position: absolute; left: 50%; bottom: 2px; transform: translateX(-50%); display: none; gap: 2px; padding: 3px;
+  position: absolute; left: 50%; top: calc(100% + 4px); display: flex; gap: 2px; padding: 3px;
   border-radius: 12px; background: var(--chrome-bg); box-shadow: 0 0 0 1px #000, 0 2px 0 #000, 0 6px 14px rgba(0, 0, 0, .35);
+  transform: translate(-50%, -10px) scale(.6); transform-origin: 50% 0; opacity: 0; visibility: hidden;
+  transition: transform .14s ease-in, opacity .12s ease-in, visibility 0s linear .14s;
 }
-.petbox.hover:not(.dragging) .tools { display: flex; }
+.petbox.keys-up .tools { top: auto; bottom: calc(100% + 4px); transform: translate(-50%, 10px) scale(.6); transform-origin: 50% 100%; }
+.petbox.hover:not(.dragging) .tools {
+  transform: translate(-50%, 0) scale(1); opacity: 1; visibility: visible;
+  transition: transform .32s cubic-bezier(.34, 1.56, .64, 1), opacity .14s ease-out, visibility 0s;
+}
 .tools button {
   all: unset; width: 28px; height: 26px; display: grid; place-items: center; border-radius: 8px; color: var(--chrome-2); cursor: pointer;
+  transition: background .12s, color .12s;
 }
 .tools button .i { width: 18px; height: 18px; }
-.tools button:hover { background: rgba(255, 255, 255, .09); color: var(--accent); }
-.tools button:active { transform: translateY(1px); }
-.tools .sep { width: 1px; margin: 4px 1px; background: rgba(255, 255, 255, .12); }
+.tools button:hover { background: color-mix(in srgb, var(--chrome-fg) 9%, transparent); color: var(--accent); }
+.tools button:active { transform: translateY(1px); background: color-mix(in srgb, var(--chrome-fg) 14%, transparent); }
+.tools .sep { width: 1px; margin: 4px 1px; background: color-mix(in srgb, var(--chrome-fg) 12%, transparent); }
+.tools .i, .tools .sep { opacity: 0; transform: translateY(-5px); transition: opacity .1s, transform .1s; }
+.petbox.keys-up .tools .i, .petbox.keys-up .tools .sep { transform: translateY(5px); }
+.petbox.hover:not(.dragging) .tools .i, .petbox.hover:not(.dragging) .tools .sep {
+  opacity: 1; transform: none; transition: opacity .2s ease-out, transform .34s cubic-bezier(.34, 1.56, .64, 1);
+}
+.petbox.hover:not(.dragging) .tools > :nth-child(2) .i { transition-delay: 35ms; }
+.petbox.hover:not(.dragging) .tools > :nth-child(3) .i { transition-delay: 70ms; }
+.petbox.hover:not(.dragging) .tools > .sep { transition-delay: 90ms; }
+.petbox.hover:not(.dragging) .tools > :nth-child(5) .i { transition-delay: 105ms; }
+.tools button:hover .i { animation: hop .36s cubic-bezier(.3, .7, .4, 1); }
+@keyframes hop { 40% { transform: translateY(-3px); } }
+@media (prefers-reduced-motion: reduce) { .tools, .tools * { transition: none !important; animation: none !important; } }
 
 /* ───────── pills ───────── */
 .stack { position: absolute; display: flex; gap: 6px; pointer-events: none; }
@@ -62,6 +89,10 @@ body.shadow #sprite { filter: drop-shadow(0 4px 3px rgba(0, 0, 0, .34)); }
 .stack.below { flex-direction: column; }
 .stack.end { align-items: flex-end; }
 .stack.start { align-items: flex-start; }
+/* pet.js trails the stack on a spring while the pet is dragged; it leans from the corner nearest the pet */
+.stack { transform-origin: var(--ox, right) var(--oy, bottom); }
+.stack.start { --ox: left; }
+.stack.below { --oy: top; }
 
 .pill {
   pointer-events: auto; position: relative; flex: none; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; column-gap: 9px; align-items: center;
@@ -103,7 +134,7 @@ body.shadow #sprite { filter: drop-shadow(0 4px 3px rgba(0, 0, 0, .34)); }
   font: 800 calc(19px * .74)/1 var(--font-num); white-space: nowrap; font-variant-numeric: tabular-nums;
 }
 .pill .pc small { font: 700 8px/1 var(--font-mono); margin-left: 1px; }
-.pill .bar { position: absolute; left: 14px; right: 14px; bottom: 4px; height: 2px; border-radius: 2px; background: rgba(255, 255, 255, .1); overflow: hidden; }
+.pill .bar { position: absolute; left: 14px; right: 14px; bottom: 4px; height: 2px; border-radius: 2px; background: color-mix(in srgb, var(--chrome-fg) 10%, transparent); overflow: hidden; }
 .pill .bar i { display: block; height: 100%; background: var(--accent); }
 
 .pill .x {
@@ -112,16 +143,32 @@ body.shadow #sprite { filter: drop-shadow(0 4px 3px rgba(0, 0, 0, .34)); }
 }
 .pill .x .i { width: 9px; height: 9px; }
 .pill.hover .x, .pill:hover .x { display: grid; }
-.pill .x:hover { color: #fff; background: rgba(255, 255, 255, .12); }
+.pill .x:hover { color: #fff; background: color-mix(in srgb, var(--chrome-fg) 12%, transparent); }
+
+/* Collegiapp countdowns: the same plate, the course's colour on the icon and the progress line, and the island's
+   LCD clock, amber when it's close and blinking at NOW. On hover the icon turns into the x, so the clock stays put. */
+.pill.cd .st { color: var(--kc, var(--accent)); }
+.pill.cd .lb { color: var(--chrome-3); }
+.pill.cd.p-live .lb { color: var(--kc, var(--accent)); }
+.pill.cd.p-soon .lb, .pill.cd.p-now .lb { color: var(--warn); }
+.pill.cd .bar i { background: var(--kc, var(--accent)); }
+.pill.cd .pc { min-width: 3.4em; text-align: center; }
+.pill.cd.p-soon .pc, .pill.cd.p-now .pc { --disp-bg: var(--disp-hot); --disp-fg: var(--disp-hot-fg); }
+.pill.cd.p-now .pc { animation: blink 1s steps(1, end) infinite; }
+@keyframes blink { 50% { color: transparent; } }
+@media (prefers-reduced-motion: reduce) { .pill.cd.p-now .pc { animation: none; } }
+.pill.cd .x { top: 50%; left: 10px; right: auto; width: 22px; height: 22px; margin-top: -12px; }
+.pill.cd.hover .st, .pill.cd:hover .st { visibility: hidden; }
 
 /* several chats: the front pill with up to two more peeking out behind it, on the side away from the pet */
 .deck { position: relative; isolation: isolate; flex: none; display: flex; max-width: 100%; pointer-events: none; }
 .deck .pill { flex: 1 1 auto; }
 .layer {
   position: absolute; inset: 0 10px; z-index: -1; border-radius: 17px; pointer-events: auto; cursor: pointer;
-  background: linear-gradient(to bottom, #302c27, #24211d); box-shadow: 0 0 0 1px #000, 0 6px 14px rgba(0, 0, 0, .28);
+  background: linear-gradient(to bottom, color-mix(in srgb, var(--chrome-bg) 96%, #fff), color-mix(in srgb, var(--chrome-bg) 86%, #000));
+  box-shadow: 0 0 0 1px #000, 0 6px 14px rgba(0, 0, 0, .28);
 }
-.layer.l2 { inset: 0 20px; background: #1c1a17; }
+.layer.l2 { inset: 0 20px; background: color-mix(in srgb, var(--chrome-bg) 67%, #000); }
 .stack.above .layer.l1 { transform: translateY(-7px); }
 .stack.above .layer.l2 { transform: translateY(-13px); }
 .stack.below .layer.l1 { transform: translateY(7px); }
@@ -133,3 +180,44 @@ body.shadow #sprite { filter: drop-shadow(0 4px 3px rgba(0, 0, 0, .34)); }
   padding: 5px 9px; border-radius: 99px; background: var(--chrome-bg); box-shadow: 0 0 0 1px #000, 0 2px 0 #000;
 }
 .more:hover { color: #fff; }
+
+/* ───────── the Standard look ───────── */
+/* html[data-look="standard"] (pet.js, from a Standard theme): the pills are the theme's surface cards, flat with one
+   hairline and a soft drop, 8 px radii, system fonts in sentence case, line icons (ui.js LINE) and plain number
+   tiles for the LCDs; no gradients, key lips or travel. */
+:root[data-look="standard"] {
+  --font-ui: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  --font-num: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI Variable Display", "Segoe UI", Roboto, sans-serif;
+  --drop: 0 6px 16px rgba(0, 0, 0, .16);
+}
+:root[data-look="standard"][data-scheme="dark"] { --drop: 0 6px 16px rgba(0, 0, 0, .5); }
+.i.line { fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; shape-rendering: auto; }
+[data-look="standard"] :is(.badge, .pill .x) .i.line { width: 12px; height: 12px; }
+[data-look="standard"] .pill.s-running .st .i { animation-timing-function: linear; }
+
+[data-look="standard"] :is(.pill, .layer, .badge, .tools, .more) { background: var(--chrome-bg); box-shadow: 0 0 0 1px var(--line), var(--drop); }
+[data-look="standard"] :is(.pill, .layer, .tools) { border-radius: 8px; }
+[data-look="standard"] .tools button { border-radius: 6px; }
+[data-look="standard"] .layer { background: color-mix(in srgb, var(--chrome-fg) 4%, var(--chrome-bg)); }
+[data-look="standard"] .layer.l2 { background: color-mix(in srgb, var(--chrome-fg) 8%, var(--chrome-bg)); }
+[data-look="standard"] .pill.s-review { background: color-mix(in srgb, var(--ok) 8%, var(--chrome-bg)); }
+[data-look="standard"] .pill .ti { color: var(--chrome-fg); font-weight: 600; }
+[data-look="standard"] .pill.s-review .ti { color: var(--chrome-2); }
+[data-look="standard"] .pill :is(.lb, .nn) { font: 500 11px/1 var(--font-ui); text-transform: none; letter-spacing: 0; }
+[data-look="standard"] .pill .t3 { font: 500 11.5px/1.5 var(--font-ui); text-transform: none; letter-spacing: 0; }
+[data-look="standard"] .pill .pc { padding: 4px 6px; border-radius: 6px; background: var(--disp-bg); box-shadow: inset 0 0 0 1px var(--line); font: 600 12px/1 var(--font-num); }
+[data-look="standard"] .pill .pc small { font: 500 9px/1 var(--font-ui); }
+[data-look="standard"] .badge { font: 600 11px/1 var(--font-ui); }
+[data-look="standard"] .badge:active { transform: none; }
+[data-look="standard"] .more { font: 500 11px/1 var(--font-ui); letter-spacing: 0; }
+[data-look="standard"] :is(.badge, .more, .pill .x):hover { color: var(--chrome-fg); }
+[data-look="standard"] .badge:hover { background: color-mix(in srgb, var(--chrome-fg) 6%, var(--chrome-bg)); }
+
+/* html[data-claude] (pet.js, from Claude or Claude Dark): the Standard cards rounder and their drop warmer, like the
+   Claude desktop app's menus */
+:root[data-claude] { --drop: 0 8px 22px rgba(20, 20, 19, .14); }
+:root[data-claude][data-scheme="dark"] { --drop: 0 8px 22px rgba(0, 0, 0, .5); }
+[data-claude] :is(.pill, .layer, .tools) { border-radius: 12px; }
+[data-claude] .tools button { border-radius: 8px; }
+[data-claude] .pill .pc { border-radius: 7px; }

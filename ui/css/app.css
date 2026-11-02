@@ -54,6 +54,8 @@
 
 .big-stage { width: 100%; aspect-ratio: 1 / 1; max-height: 15em; background: var(--surface-2); }
 .big-stage .sprite { height: 88%; aspect-ratio: 192 / 208; image-rendering: pixelated; background-repeat: no-repeat; filter: drop-shadow(0 4px 3px rgba(0, 0, 0, .3)); }
+/* Smooth edges (on unless the setting is off): the cards and previews show the pet as the desktop does */
+body.smooth .pcard .sprite, body.smooth .big-stage .sprite, body.smooth .pv-stage canvas { image-rendering: auto; }
 .statechips { display: flex; flex-wrap: wrap; gap: .35em; }
 
 /* ───────── editor ───────── */
@@ -85,7 +87,8 @@
   position: relative; width: var(--cw); aspect-ratio: 192 / 208; border-radius: 6px; overflow: hidden; cursor: grab;
   box-shadow: inset 0 0 0 1px var(--line); touch-action: none;
 }
-/* thumbnails are smaller than the frame, so they're smoothed; the preview and frame view stay pixelated like the pet */
+/* thumbnails are smaller than the frame, so they're smoothed; the preview follows the pet's Smooth edges and the
+   frame view stays pixelated for editing */
 .cell canvas { width: 100%; height: 100%; display: block; pointer-events: none; }
 .cell .n { position: absolute; left: 3px; top: 2px; font: 700 .62em/1 var(--font-mono); color: var(--text-3); pointer-events: none; }
 .cell .ms { position: absolute; right: 3px; bottom: 2px; font: .6em/1 var(--font-mono); color: var(--text-3); background: color-mix(in srgb, var(--surface) 80%, transparent); padding: 1px 2px; border-radius: 3px; pointer-events: none; }
@@ -107,7 +110,7 @@
 .ed .side { display: flex; flex-direction: column; gap: .9em; min-height: 0; overflow: auto; padding: 2px 2px 4px; margin: -2px; }
 .ed .side > .panel { flex: none; }
 .pv-stage { position: relative; width: 100%; aspect-ratio: 4 / 3; background-color: var(--surface-2); }
-.pv-stage canvas { height: 86%; aspect-ratio: 192 / 208; image-rendering: pixelated; filter: drop-shadow(0 4px 3px rgba(0, 0, 0, .3)); }
+.pv-stage canvas { height: 86%; aspect-ratio: 192 / 208; image-rendering: pixelated; filter: drop-shadow(0 4px 3px rgba(0, 0, 0, .3)); transform-origin: 50% 92%; transition: rotate .2s ease-out; }
 .pv-stage .fr { position: absolute; left: .5em; bottom: .45em; font: .7em/1 var(--font-mono); color: var(--text-3); }
 .pv-bar { display: flex; align-items: center; gap: .35em; flex-wrap: wrap; }
 .fv-stage { width: 100%; aspect-ratio: 192 / 208; max-height: 18em; margin: 0 auto; }
@@ -163,5 +166,55 @@
 .settings .fgrid { grid-template-columns: 7.5em minmax(0, 1fr); gap: .9em 1em; }
 .settings .fgrid > label { align-self: start; padding-top: .3em; }
 .chks { display: flex; flex-direction: column; gap: .45em; }
+.size { display: flex; align-items: center; gap: .7em; }
+.size input { flex: 1; min-width: 0; max-width: 16em; }
+.size .val { min-width: 3.2em; font: .86em var(--font-mono); color: var(--text-2); }
 .check { display: inline-flex; align-items: center; gap: .55em; cursor: pointer; color: var(--text-2); font-size: .92em; }
 .path { font: .8em var(--font-mono); color: var(--text-3); overflow-wrap: anywhere; -webkit-user-select: text; user-select: text; }
+
+/* ───────── themes (Settings: themes.js) ───────── */
+.cols.settings > .themes { grid-column: 1 / -1; }
+/* switching at night comes first; on, the Day and Night slots (tabs) pick which one the grid fills */
+.tnight { display: flex; flex-wrap: wrap; align-items: center; gap: .5em 1em; }
+.tnight .tq { font-weight: 700; color: var(--text); }
+.tnight + .note { margin: .5em 0 0; }
+.tslots { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .8em; max-width: 38em; margin-top: .8em; }
+.tslot {
+  all: unset; box-sizing: border-box; display: grid; grid-template-columns: 6.5em minmax(0, 1fr); grid-template-rows: 1fr 1fr; gap: .25em .75em; min-width: 0;
+  padding: .55em .65em; border-radius: 12px; background: var(--surface); box-shadow: 0 0 0 1px var(--line), 0 2px 0 var(--line); cursor: pointer;
+}
+.tslot.on { box-shadow: 0 0 0 2px var(--accent), 0 2px 0 color-mix(in srgb, var(--accent) 60%, #000); }
+.tslot:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.tslot .tsw { grid-row: 1 / span 2; align-self: center; }
+.tslot .tsk { display: flex; align-items: center; gap: .45em; min-width: 0; align-self: end; font: 700 .74em/1 var(--font-mono); text-transform: uppercase; letter-spacing: .08em; color: var(--text-3); }
+.tslot.on .tsk { color: var(--text-2); }
+.tslot.on .tsk .i { color: var(--accent); }
+.tslot .tsk .tag { font-size: 1em; }
+.tslot .tn { align-self: start; font-weight: 700; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (hover: hover) { .tslot:not(.on):hover .tn { color: var(--accent); } }
+.tslot.flash .tsw { animation: tslot-in .32s cubic-bezier(.2, .9, .3, 1.25); }
+@keyframes tslot-in { from { opacity: .2; transform: scale(.85); } }
+@media (prefers-reduced-motion: reduce) { .tslot.flash .tsw { animation: none; } }
+.grp + .tgrid { margin-top: .3em; }
+.tgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(13.5em, 1fr)); gap: .8em; margin: .7em 0 .5em; }
+.tcard { display: flex; flex-direction: column; gap: .4em; min-width: 0; padding: .6em; border-radius: 12px; background: var(--surface); box-shadow: 0 0 0 1px var(--line), 0 2px 0 var(--line); }
+.tcard.on { box-shadow: 0 0 0 2px var(--accent), 0 2px 0 color-mix(in srgb, var(--accent) 60%, #000); }
+.tpick { all: unset; box-sizing: border-box; display: flex; flex-direction: column; gap: .45em; min-width: 0; cursor: pointer; border-radius: 6px; }
+.tpick:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tpick[disabled] { cursor: default; }
+@media (hover: hover) { .tpick:not([disabled]):hover .tn { color: var(--accent); } }
+.tsw { display: block; width: 100%; height: auto; border-radius: 6px; box-shadow: 0 0 0 1px var(--line); }
+.tcard .tn { font-weight: 700; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tnr { display: flex; align-items: center; gap: .45em; min-width: 0; }
+.tnr .tmark { flex: none; display: inline-flex; color: var(--text-3); }
+.tcard .tags { display: flex; flex-wrap: wrap; gap: .3em; }
+.tcard .ds { font-size: .82em; color: var(--text-3); }
+.tcard .actions { margin-top: auto; gap: .3em; }
+.tmake { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 1.4em; margin-top: .4em; }
+@container app (max-width: 900px) { .tmake { grid-template-columns: minmax(0, 1fr); } }
+.tmake > div { display: flex; flex-direction: column; gap: .55em; min-width: 0; }
+.tmake .note { margin: 0; }
+.tmake textarea { width: 100%; resize: vertical; font: .8em/1.45 var(--font-mono); }
+.tread { display: grid; grid-template-columns: 13.5em minmax(0, 1fr); gap: .8em; align-items: start; }
+@container app (max-width: 640px) { .tread { grid-template-columns: minmax(0, 1fr); } }
+.note.bad { color: color-mix(in srgb, var(--bad) 75%, var(--text)); }

@@ -52,6 +52,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "category": "DeveloperTool",
     "shortDescription": "A Codex-compatible desktop pet for Claude sessions.",
     "icon": [
@@ -71,6 +72,17 @@
       },
       "nsis": {
         "installMode": "currentUser"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEY2RTc4ODNBNjk5N0VCQzMKUldURDY1ZHBPb2puOXBxVmJ4aGtaTHo0YnJEdi96OHNxbW1PeFlVNitJQ2pUM29uUUlwdEVYamkK",
+      "endpoints": [
+        "https://github.com/imanimal/claude-companion/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
       }
     }
   }

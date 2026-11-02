@@ -1,4 +1,5 @@
-//! Tray icon: left click opens the companion window; the menu shows or hides the pet and quits.
+//! Tray icon: left click opens the companion window; the menu shows or hides the pet, checks for updates
+//! (the item becomes "Update to x.y.z…" once updater.rs finds one) and quits. The pet's own menu also sizes it.
 //! Menu ids are shared with the pet's right-click menu (overlay::pet_menu) and handled in `on_menu`.
 
 use tauri::image::Image;
@@ -7,12 +8,16 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{AppHandle, Emitter, Manager};
 
 pub fn build(app: &AppHandle) -> tauri::Result<()> {
+    let update = MenuItemBuilder::with_id("update", "Check for updates").build(app)?;
     let menu = MenuBuilder::new(app)
         .item(&MenuItemBuilder::with_id("open", "Open Claude Companion").build(app)?)
         .item(&MenuItemBuilder::with_id("toggle-pet", "Show or hide the pet").build(app)?)
         .separator()
+        .item(&update)
         .item(&MenuItemBuilder::with_id("quit", "Quit").build(app)?)
         .build()?;
+    #[cfg(desktop)]
+    crate::updater::set_menu_item(app, update);
     let icon = Image::from_bytes(include_bytes!("../icons/tray.png"))?;
     TrayIconBuilder::with_id("main")
         .icon(icon)
@@ -54,11 +59,19 @@ pub fn on_menu(app: &AppHandle, e: MenuEvent) {
         "edit" => edit_active(app),
         "claude" => crate::open_claude(app.clone()),
         "hide-pet" => crate::set_pet_visible(app, false),
-        "toggle-pet" => {
-            let vis = app.get_webview_window("pet").and_then(|w| w.is_visible().ok()).unwrap_or(false);
-            crate::set_pet_visible(app, !vis);
+        // the switch, not the window: a fullscreen app may have the pet hidden (fullscreen.rs)
+        "toggle-pet" => crate::set_pet_visible(app, !crate::pet_prefs(app).0),
+        // the main window checks, then asks before installing
+        "update" => {
+            show_main(app, Some("settings"));
+            let _ = app.emit_to("main", "update-check", ());
         }
         "quit" => app.exit(0),
-        _ => {}
+        // the pet's Size menu; the pet keeps its feet where they were (pet.js applySettings)
+        id => {
+            if let Some(pct) = id.strip_prefix("size-").and_then(|p| p.parse::<f64>().ok()) {
+                let _ = crate::set_settings(app.clone(), serde_json::json!({ "petScale": pct / 100.0 }));
+            }
+        }
     }
 }

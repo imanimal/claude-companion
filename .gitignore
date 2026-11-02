@@ -2,3 +2,5 @@
 /target/
 # Tauri regenerates these schemas on every build.
 /src-tauri/gen/schemas/
+# The updater's signing key lives in ~/.tauri and never comes in here.
+*.key

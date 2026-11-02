@@ -26,6 +26,16 @@ tauri-plugin-single-instance = "2"
 tauri-plugin-autostart = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Collegiapp's timestamps (collegiapp.rs); the same features Collegiapp builds it with
+chrono = { version = "0.4", default-features = false, features = ["std", "serde"] }
+
+# desktop only, as in Collegiapp (lib.rs gates its use with #[cfg(desktop)])
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-updater = "2"
+
+# fullscreen.rs: the foreground window and the pet's monitor (this version is already in Cargo.lock)
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging"] }
 
 [features]
 # No dev server: ui/ is static, so the bundled custom protocol is always on.

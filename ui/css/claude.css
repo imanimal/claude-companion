@@ -1,0 +1,40 @@
+/* Claude Companion — the Claude themes' finish (html[data-claude], set by themes.js for Claude and Claude Dark): the
+   Standard look dressed like the Claude desktop app. The ivory, clay and warm charcoal are the themes' tokens; this
+   adds serif headings (Source Serif 4 standing in for Claude's own), 12 px cards and 8 px keys, view tabs that are a
+   quiet fill instead of a card, heading rows without a rule, and a bare clay logo. Loads after standard.css and
+   only overrides it. */
+
+:root[data-claude] {
+  --font-serif: "Source Serif 4", ui-serif, "Iowan Old Style", Georgia, Cambria, "Times New Roman", serif;
+  --radius: 12px; --btn-r: 8px;
+  --card-shadow: 0 0 0 1px var(--line), 0 1px 3px rgba(20, 20, 19, .04);
+  --drop: 0 12px 32px rgba(20, 20, 19, .12), 0 0 0 1px var(--line);
+  --scrim: rgba(20, 20, 19, .32);
+}
+:root[data-claude][data-scheme="dark"] {
+  --card-shadow: 0 0 0 1px var(--line);
+  --drop: 0 12px 32px rgba(0, 0, 0, .45), 0 0 0 1px var(--line);
+  --scrim: rgba(0, 0, 0, .55);
+}
+[data-claude] ::selection { background: color-mix(in srgb, var(--accent) 24%, transparent); }
+[data-claude] :is(input, select, textarea) { border-radius: 8px; }
+
+/* top bar: the name in the serif beside a bare clay paw; the open view is a soft fill, like the app's sidebar */
+[data-claude] .brandmark { gap: .4em; }
+[data-claude] .brandmark .nm { font: 500 1.14em/1 var(--font-serif); letter-spacing: -.01em; }
+[data-claude] .logo { width: auto; background: none; color: var(--accent); box-shadow: none; }
+[data-claude] .logo .i { width: 20px; height: 20px; }
+[data-claude] .nv { color: var(--text-2); border-radius: 8px; }
+[data-claude] .nv.on { background: color-mix(in srgb, var(--text) 8%, transparent); color: var(--text); box-shadow: none; }
+[data-claude] .nv.on .i { color: var(--text); }
+@media (hover: hover) { [data-claude] .nv:not(.on):hover { background: color-mix(in srgb, var(--text) 4.5%, transparent); } }
+
+/* cards: titled in the serif with no rule under the heading */
+[data-claude] .ph { box-shadow: none; min-height: 3em; padding-top: .45em; }
+[data-claude] .ph .pt { font: 500 1.12em/1.2 var(--font-serif); letter-spacing: -.005em; }
+[data-claude] .ph .pt .i { display: none; }
+[data-claude] .m-empty b { font: 500 1.35em/1.25 var(--font-serif); color: var(--text); }
+[data-claude] :is(.pcard, .tcard, .tslot) { border-radius: 12px; }
+[data-claude] :is(.display, .stage-well) { border-radius: 8px; }
+[data-claude] .toast { border-radius: 10px; }
+[data-claude] .dialog { border-radius: 16px; }

@@ -2,13 +2,18 @@
 //! bigger than the pet (room for the pill above or below) and click-through everywhere except the
 //! regions pet.js reports (`set_hit_rects`): a 33 ms poll compares the cursor with those rects and flips
 //! `set_ignore_cursor_events`, and reports the cursor (window CSS px) as `cursor` so v2 pets can look at it.
-//! Dragging is done here too (`drag_start`/`drag_stop`): the window follows the cursor every 8 ms, which
-//! stays smooth where an IPC round trip per pointer move would not.
+//! Dragging is done here too (`drag_start`/`drag_stop`): every 8 ms the window eases toward the cursor, and
+//! after release it glides onto the spot it was let go at. That stays smooth where an IPC round trip per
+//! pointer move would not.
 
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
+
+/// How quickly the dragged window catches up with the cursor: the time constant of its easing, in seconds.
+const DRAG_EASE: f64 = 0.03;
 use tauri::{AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, Runtime, WebviewWindowBuilder};
 
 #[derive(Default)]
@@ -16,6 +21,8 @@ pub struct Overlay {
     rects: Mutex<Vec<[f64; 4]>>,
     dragging: AtomicBool,
     drag_gen: AtomicU64,
+    /// the drag's easing thread; it ends where the window came to rest
+    drag_thread: Mutex<Option<JoinHandle<[i32; 2]>>>,
     interactive: AtomicBool,
 }
 
@@ -35,7 +42,8 @@ pub fn create<R: Runtime>(app: &AppHandle<R>, visible: bool) -> tauri::Result<()
 
 pub fn spawn_poll<R: Runtime>(app: AppHandle<R>) {
     std::thread::spawn(move || {
-        let mut last = (f64::NAN, f64::NAN);
+        // not NaN: every comparison with NaN is false, so no cursor would ever be sent
+        let mut last = (f64::INFINITY, f64::INFINITY);
         loop {
             std::thread::sleep(Duration::from_millis(33));
             let Some(w) = app.get_webview_window("pet") else { continue };
@@ -112,26 +120,67 @@ pub fn drag_start(app: AppHandle, state: tauri::State<Overlay>) -> Result<(), St
     state.dragging.store(true, Ordering::Relaxed);
     let gen = state.drag_gen.fetch_add(1, Ordering::Relaxed) + 1;
     let app2 = app.clone();
-    std::thread::spawn(move || {
+    let thread = std::thread::spawn(move || {
         let st = app2.state::<Overlay>();
-        let mut last = (pos0.x, pos0.y);
-        while st.dragging.load(Ordering::Relaxed) && st.drag_gen.load(Ordering::Relaxed) == gen {
-            if let Ok(c) = app2.cursor_position() {
-                let next = (pos0.x + (c.x - cur0.x).round() as i32, pos0.y + (c.y - cur0.y).round() as i32);
-                if next != last {
-                    last = next;
-                    let _ = w.set_position(PhysicalPosition::new(next.0, next.1));
+        let (mut x, mut y) = (pos0.x as f64, pos0.y as f64);
+        let (mut tx, mut ty) = (x, y);
+        let mut last = [pos0.x, pos0.y];
+        let mut sent = (x, y);
+        let mut t = Instant::now();
+        while st.drag_gen.load(Ordering::Relaxed) == gen {
+            // while held the target follows the cursor; once let go it stays where the cursor was
+            let held = st.dragging.load(Ordering::Relaxed);
+            if held {
+                if let Ok(c) = app2.cursor_position() {
+                    (tx, ty) = (pos0.x as f64 + c.x - cur0.x, pos0.y as f64 + c.y - cur0.y);
                 }
+            }
+            let now = Instant::now();
+            let k = 1.0 - (-(now - t).as_secs_f64() / DRAG_EASE).exp();
+            t = now;
+            x += (tx - x) * k;
+            y += (ty - y) * k;
+            let settled = !held && (tx - x).abs() < 0.5 && (ty - y).abs() < 0.5;
+            if settled {
+                (x, y) = (tx, ty);
+            }
+            let next = [x.round() as i32, y.round() as i32];
+            if next != last {
+                last = next;
+                let _ = w.set_position(PhysicalPosition::new(next[0], next[1]));
+            }
+            // pet.js hangs the pills on a spring from this: where the window is and how fast it's going
+            if (x - sent.0).abs() > 0.05 || (y - sent.1).abs() > 0.05 {
+                sent = (x, y);
+                let _ = app2.emit_to("pet", "drag-move", [x, y, (tx - x) / DRAG_EASE, (ty - y) / DRAG_EASE]);
+            }
+            if settled {
+                break;
             }
             std::thread::sleep(Duration::from_millis(8));
         }
+        let _ = app2.emit_to("pet", "drag-move", [x, y, 0.0, 0.0]);
+        last
     });
+    if let Ok(mut d) = state.drag_thread.lock() {
+        *d = Some(thread);
+    }
     Ok(())
 }
 
+/// Lets go and answers once the window has glided to rest, with where that is.
 #[tauri::command]
-pub fn drag_stop(app: AppHandle, state: tauri::State<Overlay>) -> Result<[i32; 2], String> {
-    state.dragging.store(false, Ordering::Relaxed);
+pub async fn drag_stop(app: AppHandle) -> Result<[i32; 2], String> {
+    let thread = {
+        let st = app.state::<Overlay>();
+        st.dragging.store(false, Ordering::Relaxed);
+        st.drag_thread.lock().ok().and_then(|mut d| d.take())
+    };
+    if let Some(thread) = thread {
+        if let Ok(Ok(p)) = tauri::async_runtime::spawn_blocking(move || thread.join()).await {
+            return Ok(p);
+        }
+    }
     let w = app.get_webview_window("pet").ok_or("no pet window")?;
     let p = w.outer_position().map_err(|e| e.to_string())?;
     Ok([p.x, p.y])
@@ -139,13 +188,22 @@ pub fn drag_stop(app: AppHandle, state: tauri::State<Overlay>) -> Result<[i32; 2
 
 #[tauri::command]
 pub fn pet_menu(app: AppHandle) -> Result<(), String> {
-    use tauri::menu::{MenuBuilder, MenuItemBuilder};
+    use tauri::menu::{CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
     let w = app.get_webview_window("pet").ok_or("no pet window")?;
+    // Settings' slider goes in between; the menu ticks a size only when it's one of these
+    let scale = crate::pet_scale(&app);
+    let mut size = SubmenuBuilder::new(&app, "Size");
+    for pct in [50, 75, 100, 125, 150, 200] {
+        let label = if pct == 100 { "100% (Codex)".to_string() } else { format!("{pct}%") };
+        let on = (scale * 100.0 - pct as f64).abs() < 0.5;
+        size = size.item(&CheckMenuItemBuilder::with_id(format!("size-{pct}"), label).checked(on).build(&app).map_err(|e| e.to_string())?);
+    }
     let menu = MenuBuilder::new(&app)
         .item(&MenuItemBuilder::with_id("open", "Open Claude Companion").build(&app).map_err(|e| e.to_string())?)
         .item(&MenuItemBuilder::with_id("edit", "Edit this pet").build(&app).map_err(|e| e.to_string())?)
         .item(&MenuItemBuilder::with_id("claude", "Open Claude").build(&app).map_err(|e| e.to_string())?)
         .separator()
+        .item(&size.build().map_err(|e| e.to_string())?)
         .item(&MenuItemBuilder::with_id("hide-pet", "Hide pet").build(&app).map_err(|e| e.to_string())?)
         .item(&MenuItemBuilder::with_id("quit", "Quit").build(&app).map_err(|e| e.to_string())?)
         .build()

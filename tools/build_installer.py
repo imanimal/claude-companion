@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the installer and, with --install, install it on this computer.
+"""Build the signed installer and, with --install, install it on this computer.
 
     python tools/build_installer.py             # Windows: <target>/release/bundle/nsis/Claude Companion_<version>_x64-setup.exe
     python tools/build_installer.py --install   # then install it for this user and start it
@@ -7,9 +7,12 @@
 Installing puts Claude Companion in %LOCALAPPDATA%\\Claude Companion with a Start menu entry and a desktop shortcut
 (no admin prompt). It runs the installer and starts the app through Explorer, as if you'd double-clicked them: a
 shell inside a packaged app (Claude's desktop app, for one) has its AppData writes redirected into that package,
-which would install a copy only the package can see. There's no updater, so builds aren't signed. The bundler is the
-Tauri CLI through npx; ui/ itself stays buildless. On macOS this builds the .app and .dmg, and --install is not
-supported. Set CARGO_TARGET_DIR to a short folder on Windows (C:/ct) to stay clear of long paths.
+which would install a copy only the package can see.
+
+tauri.conf.json turns on updater artifacts, so every build is signed: the key is read from
+~/.tauri/claude-companion.key (TAURI_SIGNING_PRIVATE_KEY_PATH points elsewhere). The bundler is the Tauri CLI through
+npx, the same CLI the release workflow uses; ui/ itself stays buildless. On macOS this builds the .app and .dmg, and
+--install is not supported. Set CARGO_TARGET_DIR to a short folder on Windows (C:/ct) to stay clear of long paths.
 """
 
 import os
@@ -24,9 +27,16 @@ EXE = "claude-companion.exe"
 
 
 def main():
+    key = Path(os.environ.get("TAURI_SIGNING_PRIVATE_KEY_PATH", Path.home() / ".tauri" / "claude-companion.key"))
+    if not key.is_file():
+        sys.exit(f"No updater signing key at {key}. Restore your backup, or generate a new pair with\n"
+                 f"  npx @tauri-apps/cli@2 signer generate --ci -p \"\" -w {key}\n"
+                 "and put the new public key in tauri.conf.json (installed copies then need one manual reinstall).")
+    env = dict(os.environ, TAURI_SIGNING_PRIVATE_KEY=key.read_text().strip())
+    env.setdefault("TAURI_SIGNING_PRIVATE_KEY_PASSWORD", "")
     win = sys.platform == "win32"
     bundles = "nsis" if win else "app,dmg"
-    subprocess.run(["npx", "--yes", "@tauri-apps/cli@2", "build", "--bundles", bundles], cwd=ROOT, check=True, shell=win)
+    subprocess.run(["npx", "--yes", "@tauri-apps/cli@2", "build", "--bundles", bundles], cwd=ROOT, env=env, check=True, shell=win)
 
     target = Path(os.environ.get("CARGO_TARGET_DIR", ROOT / "target"))
     out = target / "release" / "bundle" / ("nsis" if win else "dmg")

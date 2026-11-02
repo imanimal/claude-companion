@@ -3,6 +3,7 @@
      Ctrl+drag copies. Flip, nudge, copy and paste (also images from other apps), duplicate, clear.
    - Per row: how many frames play ("rowFrames") and each frame's ms (manifest claudeCompanion.timing), with a
      live preview that plays like Codex (three times, then the slow idle) or loops.
+   - Per pet, on the run rows: lean into the drag (claudeCompanion.tilt), for pets without a proper walk cycle.
    - v1 sheets can gain the two v2 look rows. Sheets that aren't a Codex size are scaled to 1536 wide and saved
      as v1 or v2.
    - Everything is undoable. Frames are ImageData that is never changed in place, so history entries share them.
@@ -19,7 +20,7 @@
 
   let host = null, root = null, active = false, want = null, loading = null, busy = false;
   // the pet being edited; cells[r][c] is ImageData or null (blank)
-  const E = { id: null, pet: null, cells: [], rows: 9, rowFrames: [], timing: {}, name: "", description: "", note: "", cleanTx: null };
+  const E = { id: null, pet: null, cells: [], rows: 9, rowFrames: [], timing: {}, tilt: false, name: "", description: "", note: "", cleanTx: null };
   let sel = [], focus = null, anchor = null, painted = [], cellEls = [];
   let undo = [], redo = [], cur = null, nudgeTx = null, clip = [], drag = null, ghost = null;
   let zoom = ZOOM[ls("cc.ed.zoom")] ? ls("cc.ed.zoom") : "m";
@@ -29,6 +30,7 @@
   const key = (r, c) => r + ":" + c;
   const unkey = (k) => k.split(":").map(Number);
   const isLook = (r) => r >= 9;
+  const isRun = (r) => r === 1 || r === 2;
   const fmtNow = () => (E.rows === 11 ? V2 : V1);
   const required = (r) => fmtNow().required[r] || COLS;
   const rowState = (r) => SP.ROWS[r].key;
@@ -112,10 +114,11 @@
   });
 
   /* ───────── history ───────── */
-  const metaSnap = () => JSON.parse(JSON.stringify({ rows: E.rows, rowFrames: E.rowFrames, timing: E.timing, name: E.name, description: E.description }));
+  const metaSnap = () => JSON.parse(JSON.stringify({ rows: E.rows, rowFrames: E.rowFrames, timing: E.timing, tilt: E.tilt, name: E.name, description: E.description }));
   function setMeta(m) {
     E.rowFrames = m.rowFrames.slice();
     E.timing = JSON.parse(JSON.stringify(m.timing));
+    E.tilt = m.tilt;
     E.name = m.name;
     E.description = m.description;
   }
@@ -350,6 +353,7 @@
       const t = pet.timing && pet.timing[st];
       if (Array.isArray(t) && t.every((v) => Number.isFinite(v) && v > 0)) E.timing[st] = t.slice(0, COLS);
     }
+    E.tilt = pet.tilt;
     E.name = pet.name; E.description = pet.description;
     E.note = pet.valid ? "" :
       `This sheet is ${info.width}×${info.height}${scale !== 1 ? ", shown scaled to 1536 wide" : ""}. ` +
@@ -384,6 +388,7 @@
     }
     const cc = m.claudeCompanion && typeof m.claudeCompanion === "object" ? m.claudeCompanion : {};
     if (Object.keys(timing).length) cc.timing = timing; else delete cc.timing;
+    if (E.tilt) cc.tilt = true; else delete cc.tilt;
     if (Object.keys(cc).length) m.claudeCompanion = cc; else delete m.claudeCompanion;
     return m;
   }
@@ -592,6 +597,8 @@
         <div class="timing">${times.map((v, i) => `<label for="edMs${i}"${i === c ? ' class="cur"' : ""}>Frame ${i + 1}${i === nf - 1 && nf > 1 ? " (last)" : ""}</label><span><input type="number" id="edMs${i}" data-ms="${i}" min="16" max="60000" step="10" value="${v}"${i === c ? ' class="cur"' : ""}> ms</span>`).join("")}</div>
         <div class="rowtools"><button class="btn sm" data-ed="t-fast">Faster</button><button class="btn sm" data-ed="t-slow">Slower</button><button class="btn sm ghost" data-ed="t-reset"${E.timing[st] ? "" : " disabled"}>Reset to Codex</button></div>
         <p class="note" style="margin:.7em 0 0">Codex plays its own timing and the standard frame count; these apply on the Claude Companion pet${st === "idle" ? ". Idle runs at one sixth speed, already counted here" : ""}.</p>`;
+      if (isRun(r)) body += `<label class="check" style="margin-top:.9em"><input type="checkbox" id="edTilt"${E.tilt ? " checked" : ""}> Lean into the drag</label>
+        <p class="note" style="margin:.35em 0 0">For pets without a proper walk cycle: while dragged, the pet tips toward where it's going, more the faster it moves, and sways upright after the drop. For both run rows; Codex ignores it.</p>`;
     }
     rw.innerHTML = `<div class="ph"><span class="pt">${ic("timer")} Row</span><span class="cnt">${esc(R.label)}</span></div><div class="pb">${body}</div>`;
   }
@@ -677,6 +684,8 @@
     const f = PV.hover || PV.list[PV.i];
     if (!f || !E.cells[f.row]) { paint(cv, null); return; }
     paint(cv, E.cells[f.row][f.col]);
+    // a tilting pet's run rows lean the way a brisk drag tips them
+    cv.style.rotate = E.tilt && !PV.hover && isRun(f.row) ? (f.row === 1 ? 1 : -1) * SP.TILT * 0.75 + "deg" : "";
     const fr = $("#pvFr");
     if (fr) fr.textContent = PV.hover ? `Looking ${f.col + 1 + (f.row - 9) * 8} of 16` : `${SP.ROWS[f.row].label} ${f.col + 1}${isLook(f.row) ? "" : ` · ${f.ms} ms`}`;
     const was = root.querySelector(".cell.playing");
@@ -859,6 +868,7 @@
       if (t.id === "edPick") return void open(t.value);
       if (t.id === "edName") { const v = t.value.trim(); if (v) edit("Rename", () => { E.name = v; }); else t.value = E.name; return; }
       if (t.id === "edDesc") return void edit("Description", () => { E.description = t.value.trim(); });
+      if (t.id === "edTilt") return void edit(t.checked ? "Tilt on" : "Tilt off", () => { E.tilt = t.checked; });
       if (t.id === "edAll" || t.dataset.ms != null) {
         const v = Math.round(+t.value);
         if (!(v >= 16 && v <= 60000)) { toast("Use a duration from 16 to 60000 ms", { bad: true }); drawSide(); return; }

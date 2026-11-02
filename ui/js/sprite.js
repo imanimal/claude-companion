@@ -8,7 +8,11 @@
      slow idle. Hover shows "jumping"; dragging shows running-left/right; reduced motion shows frame 0 only.
    - Drawn as a div with the sheet as background (800% × rows·100%), stepped by background-position, pixelated.
    Companion extensions Codex ignores: pet.json "rowFrames" (frames per row, the community editors' key) and
-   "claudeCompanion": {"timing": {state: [ms, …]}} (per-frame ms as they play; idle without the ×6). */
+   "claudeCompanion": {"timing": {state: [ms, …]}} (per-frame ms as they play; idle without the ×6),
+   "tilt": true (the pet leans into a drag, up to TILT degrees, for run rows that aren't a proper walk cycle).
+   Companion setting, outside this file: "Smooth edges" (settings.smooth, on by default) draws sprites with
+   image-rendering: auto instead of pixelated.
+   Companion hook, playback unchanged: player.onRow(row, was) runs whenever the frame shown moves to another row. */
 (function () {
   const CC = (window.CC = window.CC || {});
   const CELL_W = 192, CELL_H = 208, COLS = 8;
@@ -18,6 +22,7 @@
   ];
   const IDLE_MS = [280, 110, 110, 140, 140, 320];
   const IDLE_SLOW = 6;
+  const TILT = 8;
   // state → [row, frames, ms, last-frame ms]
   const STATES = {
     idle: [0, 6],
@@ -58,6 +63,7 @@
       fmt, rows, version: fmt ? fmt.version : rows >= 11 ? 2 : 1, valid: !!fmt,
       rowFrames: Array.isArray(m.rowFrames) ? m.rowFrames.slice() : null,
       timing: (m.claudeCompanion && m.claudeCompanion.timing) || null,
+      tilt: !!(m.claudeCompanion && m.claudeCompanion.tilt),
       manifest: m, info,
     };
   }
@@ -114,6 +120,7 @@
   class Player {
     constructor(el) {
       this.el = el; this.pet = null; this.state = "idle"; this.loop = false; this.look = null; this.timer = null; this.paused = false;
+      this.row = null; this.onRow = null;
       el.classList.add("sprite");
     }
     setPet(pet) {
@@ -136,7 +143,11 @@
       this.look = f;
       if (f) { this.stop(); this.show(f); } else if (had) this.restart();
     }
-    show(f) { if (this.pet) this.el.style.backgroundPosition = position(f, this.pet.rows); }
+    show(f) {
+      if (!this.pet) return;
+      this.el.style.backgroundPosition = position(f, this.pet.rows);
+      if (f.row !== this.row) { const was = this.row; this.row = f.row; if (this.onRow) this.onRow(f.row, was); }
+    }
     stop() { if (this.timer) clearTimeout(this.timer); this.timer = null; }
     restart() {
       this.stop();
@@ -159,5 +170,5 @@
     }
   }
 
-  CC.sprite = { CELL_W, CELL_H, COLS, FORMATS, STATES, ROWS, IDLE_MS, IDLE_SLOW, formatFor, model, frameCount, defaultMs, frames, timeline, lookFrame, position, Player, stateRow };
+  CC.sprite = { CELL_W, CELL_H, COLS, FORMATS, STATES, ROWS, IDLE_MS, IDLE_SLOW, TILT, formatFor, model, frameCount, defaultMs, frames, timeline, lookFrame, position, Player, stateRow };
 })();

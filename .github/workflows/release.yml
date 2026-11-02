@@ -1,0 +1,105 @@
+name: Release
+
+# Push a tag like v0.2.0 to build Windows, macOS and Linux installers into a DRAFT GitHub release.
+# Publishing the draft is what ships it: installed apps read releases/latest/download/latest.json
+# (src-tauri/src/updater.rs), which only follows published releases.
+# One free secret is required: TAURI_SIGNING_PRIVATE_KEY, the contents of ~/.tauri/claude-companion.key
+# (the updater only installs files signed by it; TAURI_SIGNING_PRIVATE_KEY_PASSWORD is optional). Bump "version" in src-tauri/tauri.conf.json first:
+# latest.json carries that version, not the tag.
+# Builds are not code-signed, so they show SmartScreen / Gatekeeper warnings (macOS builds are
+# ad-hoc signed via bundle.macOS.signingIdentity = "-").
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: bundle (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            args: ""
+            rust_targets: ""
+          - platform: macos-latest
+            args: "--target universal-apple-darwin"
+            rust_targets: "aarch64-apple-darwin,x86_64-apple-darwin"
+          - platform: ubuntu-22.04
+            args: ""
+            rust_targets: ""
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_targets }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: claude-companion-release
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # The frontend is buildless (ui/ is served as-is), so the only JS tool is the Tauri CLI.
+      - name: Install Tauri CLI
+        run: npm install -g @tauri-apps/cli@^2
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # --- Optional code signing (leave commented until you have certificates) ---
+          # macOS (Apple Developer Program, paid):
+          # APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          # APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          # APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # APPLE_ID: ${{ secrets.APPLE_ID }}
+          # APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Updater signing (required: bundle.createUpdaterArtifacts is on). The key has no password, so the
+          # password secret can stay unset (it reads as empty).
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tauriScript: tauri
+          projectPath: .
+          tagName: ${{ github.ref_name }}
+          releaseName: Claude Companion ${{ github.ref_name }}
+          releaseBody: |
+            Windows: download the `-setup.exe` (or the `.msi`).
+            macOS (Apple Silicon + Intel): `brew install --cask imanimal/tap/claude-companion`, or download the `.dmg`. First launch of the .dmg copy: right-click > Open (build is not notarized; the Homebrew cask clears that for you).
+            Linux: the `.AppImage` (updates itself), `.deb` or `.rpm`.
+            Already installed? Claude Companion offers this update by itself once the release is published.
+          releaseDraft: true
+          prerelease: false
+          # latest.json for the updater; Windows installs come from the per-user -setup.exe, so update with it too
+          includeUpdaterJson: true
+          updaterJsonPreferNsis: true
+          args: ${{ matrix.args }}
+
+      # Homebrew (imanimal/homebrew-tap) installs releases/latest/download/Claude-Companion_universal.dmg,
+      # so every release carries the DMG under that stable name too.
+      - name: Attach the DMG under a stable name
+        if: matrix.platform == 'macos-latest' && startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          dmg=$(ls target/universal-apple-darwin/release/bundle/dmg/*.dmg | head -1)
+          cp "$dmg" Claude-Companion_universal.dmg
+          gh release upload "${{ github.ref_name }}" Claude-Companion_universal.dmg --clobber

@@ -1,0 +1,90 @@
+/* Claude Companion — the Standard look (html[data-look="standard"], set by themes.js): a plain modern UI on the same
+   tokens as Pocket. Flat surfaces with one hairline each, 6–8 px radii, system fonts, plain tabular numbers, line
+   icons (ui.js LINE) and sentence case throughout; no gradients, glow, blur, key lips or colour stripes. It only
+   overrides pocket.css and app.css, so it loads after both. */
+
+:root[data-look="standard"] {
+  --font-ui: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  --font-num: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI Variable Display", "Segoe UI", Roboto, sans-serif;
+  --num-scale: .8;
+  --radius: 8px; --btn-r: 6px;
+  --card-shadow: 0 0 0 1px var(--line);
+  --drop: 0 10px 30px rgba(0, 0, 0, .14), 0 0 0 1px var(--line);
+  --scrim: rgba(0, 0, 0, .28);
+}
+:root[data-look="standard"][data-scheme="dark"] { --drop: 0 10px 30px rgba(0, 0, 0, .5), 0 0 0 1px var(--line); --scrim: rgba(0, 0, 0, .5); }
+[data-look="standard"] body { background: var(--bg); font-size: 14px; }
+[data-look="standard"] :is(input, select, textarea) { border-radius: 6px; }
+[data-look="standard"] kbd { border-bottom-width: 1px; }
+
+/* line icons: 24 px strokes in the same boxes as the pixel icons */
+.i.line { fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; shape-rendering: auto; }
+.i.line.sm { width: 12px; height: 12px; }
+
+/* keys: flat, one hairline, no travel */
+[data-look="standard"] .btn { background: var(--surface); box-shadow: 0 0 0 1px var(--line); margin-bottom: 0; font-weight: 500; transition: none; }
+[data-look="standard"] .btn:active { transform: none; background: var(--surface-2); box-shadow: 0 0 0 1px var(--line); }
+[data-look="standard"] .btn.primary { background: var(--accent); color: var(--on-accent); box-shadow: none; }
+[data-look="standard"] .btn.primary:active { background: color-mix(in srgb, var(--accent) 86%, #000); }
+[data-look="standard"] .btn.dark { background: var(--chrome-bg); color: var(--chrome-fg); box-shadow: none; }
+[data-look="standard"] .btn.dark .i { color: inherit; }
+[data-look="standard"] .btn.ghost { background: transparent; box-shadow: none; }
+[data-look="standard"] .btn.on { background: var(--accent-soft); color: var(--text); transform: none; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 50%, transparent); }
+[data-look="standard"] .btn.on .i { color: var(--accent); }
+@media (hover: hover) {
+  [data-look="standard"] .btn:hover { background: var(--surface-2); }
+  [data-look="standard"] .btn.primary:hover { background: color-mix(in srgb, var(--accent) 90%, #000); }
+  [data-look="standard"] .btn.dark:hover { background: color-mix(in srgb, var(--chrome-bg) 88%, #fff); }
+  [data-look="standard"] .btn.ghost:hover, [data-look="standard"] .ph .btn.ghost:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
+}
+
+/* top bar: the logo is the one accent key; window keys and program keys are plain tabs */
+[data-look="standard"] .logo { background: var(--accent); color: var(--on-accent); box-shadow: none; }
+[data-look="standard"] .winkeys { background: none; box-shadow: none; padding: 0; gap: 2px; }
+[data-look="standard"] .wk { width: 2.5em; height: 2em; margin-bottom: 0; border-radius: 6px; background: transparent; box-shadow: none; }
+[data-look="standard"] .wk .i { width: 14px; height: 14px; }
+[data-look="standard"] .wk:active { transform: none; background: var(--surface-2); box-shadow: none; }
+[data-look="standard"] .wk-x:active { background: var(--bad); color: var(--on-bad); }
+[data-look="standard"] .nv { background: transparent; box-shadow: none; border-radius: 6px; font-weight: 500; }
+[data-look="standard"] .nv:active { transform: none; box-shadow: none; }
+[data-look="standard"] .nv.on { background: var(--surface); color: var(--text); box-shadow: 0 0 0 1px var(--line); }
+@media (hover: hover) {
+  [data-look="standard"] .wk:hover, [data-look="standard"] .nv:not(.on):hover { background: color-mix(in srgb, var(--text) 7%, transparent); }
+  [data-look="standard"] .wk-x:hover { background: var(--bad); color: var(--on-bad); }
+}
+
+/* cards: a hairline and a plain heading row instead of the graphite label band */
+[data-look="standard"] .ph { background: transparent; color: var(--text); box-shadow: inset 0 -1px 0 var(--line); min-height: 2.75em; }
+[data-look="standard"] .ph .pt { font-size: .95em; font-weight: 600; text-transform: none; letter-spacing: 0; }
+[data-look="standard"] .ph .pt .i { color: var(--text-3); }
+[data-look="standard"] .ph .cnt { font-family: var(--font-ui); color: var(--text-3); opacity: 1; }
+[data-look="standard"] .ph .btn.ghost { color: var(--text-2); }
+[data-look="standard"] .ph .grille { display: none; }
+[data-look="standard"] .ph.hot { background: transparent; color: var(--text); }
+[data-look="standard"] .ph.hot .pt .i { color: var(--accent); }
+
+/* LCDs become plain number tiles: the theme's disp colours, no frame, scanlines or Doto */
+[data-look="standard"] .display { background: var(--disp-bg); border-radius: 6px; box-shadow: inset 0 0 0 1px var(--line); }
+[data-look="standard"] .display::after { content: none; }
+[data-look="standard"] .display .d-lbl { font: 500 .8em/1.2 var(--font-ui); text-transform: none; letter-spacing: 0; }
+[data-look="standard"] .display .d-num { font-weight: 600; text-shadow: none; }
+
+/* chips, tags, toasts, dialogs */
+[data-look="standard"] .chip { border-radius: 6px; }
+[data-look="standard"] .seg .chip.on { box-shadow: 0 0 0 1px var(--line); }
+[data-look="standard"] .tag { font: 500 .8em/1 var(--font-ui); text-transform: none; letter-spacing: 0; }
+[data-look="standard"] .toast { border-radius: 8px; }
+[data-look="standard"] .toast.bad { box-shadow: var(--drop); }
+[data-look="standard"] .ov { -webkit-backdrop-filter: none; backdrop-filter: none; }
+
+/* app.css parts */
+[data-look="standard"] :is(.pcard, .tcard, .tslot) { border-radius: 8px; box-shadow: 0 0 0 1px var(--line); }
+[data-look="standard"] :is(.pcard, .tcard, .tslot).on { box-shadow: 0 0 0 2px var(--accent); }
+[data-look="standard"] .tslot .tsk { font: 600 .86em/1.2 var(--font-ui); text-transform: none; letter-spacing: 0; }
+[data-look="standard"] .tslot .tsk .i { width: 16px; height: 16px; }
+[data-look="standard"] .stage-well { border-radius: 6px; box-shadow: inset 0 0 0 1px var(--line); }
+[data-look="standard"] .dropzone { border-width: 1px; border-radius: 8px; }
+[data-look="standard"] .cell { border-radius: 4px; }
+[data-look="standard"] .srow2 > .i { color: var(--text-3); }
+[data-look="standard"] .fghost .gl { font-family: var(--font-ui); }

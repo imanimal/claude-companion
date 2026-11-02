@@ -174,8 +174,9 @@ html[data-frame="mac"] .winkeys { display: none; }
 .display .d-sub { font: .84em/1.3 var(--font-ui); color: color-mix(in srgb, var(--disp-fg) 82%, var(--disp-bg)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .display .d-bar { height: 4px; border-radius: 2px; background: rgba(0, 0, 0, .12); margin-top: .5em; overflow: hidden; }
 .display .d-bar i { display: block; height: 100%; background: var(--disp-fg); }
-.display.hot { --disp-bg: var(--disp-hot); --disp-fg: #2a1a00; }
-.display.bad { --disp-bg: var(--disp-bad); --disp-fg: #2b0b02; }
+/* Cream and Night ink their hot and bad LCDs a little warmer; other themes draw disp-fg there (themes.js --disp-ink) */
+.display.hot { --disp-bg: var(--disp-hot); --disp-fg: var(--disp-ink, #2a1a00); }
+.display.bad { --disp-bg: var(--disp-bad); --disp-fg: var(--disp-ink, #2b0b02); }
 
 /* ───────────── chips, segments, fields ───────────── */
 .chip {

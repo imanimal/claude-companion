@@ -2,7 +2,7 @@
 //!   $CODEX_HOME/pets/<id>/pet.json      {"id","displayName","description","spritesheetPath", …}
 //!   $CODEX_HOME/pets/<id>/spritesheet.* PNG or WebP, 1536×1872 (v1: 8×9 cells) or 1536×2288 (v2: 8×11)
 //! Unknown manifest fields (spriteVersionNumber, rowFrames, kind, other editors' keys) are kept on save.
-//! Our own extras live under "claudeCompanion" (per-frame timing), which Codex ignores.
+//! Our own extras live under "claudeCompanion" (per-frame timing, the drag tilt), which Codex ignores.
 //! The first save of a pet in a run copies the originals to <id>/.companion-backup/<unix time>/.
 
 use serde::Serialize;
