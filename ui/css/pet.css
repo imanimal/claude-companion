@@ -47,6 +47,10 @@ body.smooth #sprite { image-rendering: auto; }
 .badge.ok .i { color: var(--ok); }
 .badge:hover { color: #fff; background: var(--chrome-hi); }
 .badge:active { transform: translateY(1px); box-shadow: 0 0 0 1px #000, 0 1px 0 #000; }
+/* it pops in as the pills fold away */
+.badge:not([hidden]) { animation: badge-in .34s cubic-bezier(.34, 1.56, .64, 1); }
+@keyframes badge-in { from { transform: scale(.4); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .badge:not([hidden]) { animation: none; } }
 
 /* hover keys: small dark B8 keys in the band just under the pet (over its head when the pills hang below, see
    pet.js KEYS). On hover they spring out of the pet, each key a beat after the last; a key hops under the
@@ -84,22 +88,37 @@ body.smooth #sprite { image-rendering: auto; }
 @media (prefers-reduced-motion: reduce) { .tools, .tools * { transition: none !important; animation: none !important; } }
 
 /* ───────── pills ───────── */
-.stack { position: absolute; display: flex; gap: 6px; pointer-events: none; }
+/* pet.js moves every part of the stack on its own springs (its transform, opacity and the variables below) and
+   orders them with z-index; the stack's own z-index keeps them all under the pet */
+.stack { position: absolute; z-index: 0; display: flex; gap: 6px; pointer-events: none; }
 .stack.above { flex-direction: column-reverse; }
 .stack.below { flex-direction: column; }
 .stack.end { align-items: flex-end; }
 .stack.start { align-items: flex-start; }
-/* pet.js trails the stack on a spring while the pet is dragged; it leans from the corner nearest the pet */
-.stack { transform-origin: var(--ox, right) var(--oy, bottom); }
+/* the corner nearest the pet, which plates grow from */
+.stack { --ox: right; --oy: bottom; }
 .stack.start { --ox: left; }
 .stack.below { --oy: top; }
+.stack > *, .ghosts > * { transform-origin: 0 0; }
+/* parts on their way out, left where they were while they fade (pet.js leave) */
+.ghosts { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
 
 .pill {
-  pointer-events: auto; position: relative; flex: none; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; column-gap: 9px; align-items: center;
-  min-width: 190px; max-width: 100%; padding: 8px 12px 10px 10px; border-radius: 17px; cursor: pointer;
-  background: linear-gradient(to bottom, var(--chrome-hi), var(--chrome-bg) 70%); color: var(--chrome-fg);
-  box-shadow: 0 0 0 1px #000, 0 2px 0 #000, 0 8px 18px rgba(0, 0, 0, .32);
+  pointer-events: auto; position: relative; isolation: isolate; flex: none; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; column-gap: 9px; align-items: center;
+  min-width: 190px; max-width: 100%; padding: 8px 12px 10px 10px; border-radius: 17px; cursor: pointer; color: var(--chrome-fg);
+  --plate: linear-gradient(to bottom, var(--chrome-hi), var(--chrome-bg) 70%);
+  --plate-shadow: 0 0 0 1px #000, 0 2px 0 #000, 0 8px 18px rgba(0, 0, 0, .32);
+  --shade: #000; --shade-step: .16;
 }
+/* The plate is drawn under the face and the deck's shade over it, so pet.js can grow them from the corner by the
+   pet (--px, --py) while the face stays sharp and fades on its own (--c). --m is how deep in the deck it sits. */
+.pill::before, .pill::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  transform: scale(var(--px, 1), var(--py, 1)); transform-origin: var(--ox) var(--oy);
+}
+.pill::before { z-index: -1; background: var(--plate); box-shadow: var(--plate-shadow); }
+.pill::after { background: var(--shade); opacity: calc(var(--m, 0) * var(--shade-step)); }
+.pill > * { opacity: var(--c, 1); }
 .pill .st { display: grid; place-items: center; width: 22px; height: 22px; align-self: center; }
 .pill.s-running .st { color: var(--accent); }
 .pill.s-waiting .st { color: var(--warn); }
@@ -118,7 +137,7 @@ body.smooth #sprite { image-rendering: auto; }
 .pill.s-waiting .lb { color: var(--warn); }
 .pill.s-review .lb { color: var(--ok); }
 /* finished chats: a green-tinted plate and a dimmer title, so the ones still working stand out */
-.pill.s-review { background: linear-gradient(to bottom, color-mix(in srgb, var(--ok) 16%, var(--chrome-hi)), color-mix(in srgb, var(--ok) 10%, var(--chrome-bg)) 70%); }
+.pill.s-review { --plate: linear-gradient(to bottom, color-mix(in srgb, var(--ok) 16%, var(--chrome-hi)), color-mix(in srgb, var(--ok) 10%, var(--chrome-bg)) 70%); }
 .pill.s-review .ti { color: var(--chrome-2); }
 .pill.s-review .t2 { color: var(--chrome-3); }
 .pill.s-failed .lb { color: var(--bad); }
@@ -160,19 +179,14 @@ body.smooth #sprite { image-rendering: auto; }
 .pill.cd .x { top: 50%; left: 10px; right: auto; width: 22px; height: 22px; margin-top: -12px; }
 .pill.cd.hover .st, .pill.cd:hover .st { visibility: hidden; }
 
-/* several chats: the front pill with up to two more peeking out behind it, on the side away from the pet */
-.deck { position: relative; isolation: isolate; flex: none; display: flex; max-width: 100%; pointer-events: none; }
-.deck .pill { flex: 1 1 auto; }
-.layer {
-  position: absolute; inset: 0 10px; z-index: -1; border-radius: 17px; pointer-events: auto; cursor: pointer;
-  background: linear-gradient(to bottom, color-mix(in srgb, var(--chrome-bg) 96%, #fff), color-mix(in srgb, var(--chrome-bg) 86%, #000));
-  box-shadow: 0 0 0 1px #000, 0 6px 14px rgba(0, 0, 0, .28);
-}
-.layer.l2 { inset: 0 20px; background: color-mix(in srgb, var(--chrome-bg) 67%, #000); }
-.stack.above .layer.l1 { transform: translateY(-7px); }
-.stack.above .layer.l2 { transform: translateY(-13px); }
-.stack.below .layer.l1 { transform: translateY(7px); }
-.stack.below .layer.l2 { transform: translateY(13px); }
+/* several chats make a deck: the front pill with up to two more peeking out behind it on the side away from the
+   pet, and the rest hidden behind those, ready to come out when it opens (pet.js stackLayers places them). A layer
+   is the chat's own pill showing just its plate, shaded by depth. */
+.pill.ly { position: absolute; min-width: 0; --c: 0; --m: 1; }
+.pill.ly2, .pill.lyh { --m: 2; }
+.pill.lyh { opacity: 0; pointer-events: none; }
+.pill.ly .x, .pill.ly:hover .x { display: none; }
+.pill.gone, .more.gone { position: absolute; pointer-events: none; }
 .pill .nn { flex: none; margin-left: auto; padding-left: 4px; font: 700 9.5px/1 var(--font-mono); letter-spacing: .04em; color: var(--chrome-3); }
 
 .more {
@@ -196,12 +210,12 @@ body.smooth #sprite { image-rendering: auto; }
 [data-look="standard"] :is(.badge, .pill .x) .i.line { width: 12px; height: 12px; }
 [data-look="standard"] .pill.s-running .st .i { animation-timing-function: linear; }
 
-[data-look="standard"] :is(.pill, .layer, .badge, .tools, .more) { background: var(--chrome-bg); box-shadow: 0 0 0 1px var(--line), var(--drop); }
-[data-look="standard"] :is(.pill, .layer, .tools) { border-radius: 8px; }
+[data-look="standard"] :is(.badge, .tools, .more) { background: var(--chrome-bg); box-shadow: 0 0 0 1px var(--line), var(--drop); }
+/* the deck's layers tint toward the text colour, 4% a layer */
+[data-look="standard"] .pill { --plate: var(--chrome-bg); --plate-shadow: 0 0 0 1px var(--line), var(--drop); --shade: var(--chrome-fg); --shade-step: .04; }
+[data-look="standard"] :is(.pill, .tools) { border-radius: 8px; }
 [data-look="standard"] .tools button { border-radius: 6px; }
-[data-look="standard"] .layer { background: color-mix(in srgb, var(--chrome-fg) 4%, var(--chrome-bg)); }
-[data-look="standard"] .layer.l2 { background: color-mix(in srgb, var(--chrome-fg) 8%, var(--chrome-bg)); }
-[data-look="standard"] .pill.s-review { background: color-mix(in srgb, var(--ok) 8%, var(--chrome-bg)); }
+[data-look="standard"] .pill.s-review { --plate: color-mix(in srgb, var(--ok) 8%, var(--chrome-bg)); }
 [data-look="standard"] .pill .ti { color: var(--chrome-fg); font-weight: 600; }
 [data-look="standard"] .pill.s-review .ti { color: var(--chrome-2); }
 [data-look="standard"] .pill :is(.lb, .nn) { font: 500 11px/1 var(--font-ui); text-transform: none; letter-spacing: 0; }
@@ -218,6 +232,6 @@ body.smooth #sprite { image-rendering: auto; }
    Claude desktop app's menus */
 :root[data-claude] { --drop: 0 8px 22px rgba(20, 20, 19, .14); }
 :root[data-claude][data-scheme="dark"] { --drop: 0 8px 22px rgba(0, 0, 0, .5); }
-[data-claude] :is(.pill, .layer, .tools) { border-radius: 12px; }
+[data-claude] :is(.pill, .tools) { border-radius: 12px; }
 [data-claude] .tools button { border-radius: 8px; }
 [data-claude] .pill .pc { border-radius: 7px; }

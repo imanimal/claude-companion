@@ -33,8 +33,10 @@ and plain Standard themes are a click away.
   - Click the pet to show up to three sessions.
   - Click a pill (or a session in the Claude view) to open that chat in the Claude desktop app. Chats running in
     a terminal open the app instead.
-  - Drag the pet anywhere. It glides after the cursor with the pills trailing a little behind, and they settle
-    on whichever side has room.
+  - Hover the stack to fan it out: each pill springs out from behind the front one, and tucks back in when you
+    leave.
+  - Drag the pet anywhere on screen; it stops at the edges. It glides after the cursor with the pills trailing a
+    little behind, each on its own spring, and they move to whichever side has room as you go.
   - Size it from half to twice Codex's size: the slider in Settings, Ctrl+scroll or a pinch over the pet, or Size
     in its right-click menu. Its feet stay where they were.
 - **Collegiapp countdowns.** When Collegiapp is on this computer, the pet reads its data

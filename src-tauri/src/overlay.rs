@@ -2,9 +2,9 @@
 //! bigger than the pet (room for the pill above or below) and click-through everywhere except the
 //! regions pet.js reports (`set_hit_rects`): a 33 ms poll compares the cursor with those rects and flips
 //! `set_ignore_cursor_events`, and reports the cursor (window CSS px) as `cursor` so v2 pets can look at it.
-//! Dragging is done here too (`drag_start`/`drag_stop`): every 8 ms the window eases toward the cursor, and
-//! after release it glides onto the spot it was let go at. That stays smooth where an IPC round trip per
-//! pointer move would not.
+//! Dragging is done here too (`drag_start`/`drag_stop`): every 8 ms the window eases toward the cursor, only as
+//! far as keeps the pet on screen, and after release it glides onto the spot it was let go at. That stays smooth
+//! where an IPC round trip per pointer move would not.
 
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -112,11 +112,25 @@ pub fn set_hit_rects(state: tauri::State<Overlay>, rects: Vec<[f64; 4]>) {
     }
 }
 
+/// `pet` is the pet's box in the window and the band its keys need above and below it, CSS px: [x, y, w, h, keys].
+/// The window follows the cursor only as far as keeps that box on a monitor's work area (the bounds pet.js
+/// placeWindow keeps), so the pet slides along the screen's edges instead of coming back after the drop.
 #[tauri::command]
-pub fn drag_start(app: AppHandle, state: tauri::State<Overlay>) -> Result<(), String> {
+pub fn drag_start(app: AppHandle, state: tauri::State<Overlay>, pet: [f64; 5]) -> Result<(), String> {
     let w = app.get_webview_window("pet").ok_or("no pet window")?;
     let cur0 = app.cursor_position().map_err(|e| e.to_string())?;
     let pos0 = w.outer_position().map_err(|e| e.to_string())?;
+    let mons: Vec<[f64; 4]> = w
+        .available_monitors()
+        .map(|ms| {
+            ms.iter()
+                .map(|m| {
+                    let a = m.work_area();
+                    [a.position.x as f64, a.position.y as f64, a.size.width as f64, a.size.height as f64]
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     state.dragging.store(true, Ordering::Relaxed);
     let gen = state.drag_gen.fetch_add(1, Ordering::Relaxed) + 1;
     let app2 = app.clone();
@@ -132,7 +146,8 @@ pub fn drag_start(app: AppHandle, state: tauri::State<Overlay>) -> Result<(), St
             let held = st.dragging.load(Ordering::Relaxed);
             if held {
                 if let Ok(c) = app2.cursor_position() {
-                    (tx, ty) = (pos0.x as f64 + c.x - cur0.x, pos0.y as f64 + c.y - cur0.y);
+                    let s = w.scale_factor().unwrap_or(1.0);
+                    (tx, ty) = on_screen(&mons, pet.map(|v| v * s), pos0.x as f64 + c.x - cur0.x, pos0.y as f64 + c.y - cur0.y);
                 }
             }
             let now = Instant::now();
@@ -166,6 +181,22 @@ pub fn drag_start(app: AppHandle, state: tauri::State<Overlay>) -> Result<(), St
         *d = Some(thread);
     }
     Ok(())
+}
+
+/// Where the window may go, given where the cursor would take it, for the pet (`pet` as in `drag_start`, physical
+/// px) to stay on the work area of the monitor under its middle, or the nearest one, with its keys' band clear.
+fn on_screen(mons: &[[f64; 4]], pet: [f64; 5], x: f64, y: f64) -> (f64, f64) {
+    let [ox, oy, w, h, keys] = pet;
+    let (cx, cy) = (x + ox + w / 2.0, y + oy + h / 2.0);
+    let gap = |m: &&[f64; 4]| {
+        let dx = (m[0] - cx).max(cx - m[0] - m[2]).max(0.0);
+        let dy = (m[1] - cy).max(cy - m[1] - m[3]).max(0.0);
+        dx * dx + dy * dy
+    };
+    let Some(m) = mons.iter().min_by(|a, b| gap(a).total_cmp(&gap(b))) else { return (x, y) };
+    let px = (x + ox).max(m[0]).min(m[0] + m[2] - w);
+    let py = (y + oy).max(m[1] + keys).min(m[1] + m[3] - h - keys);
+    (px - ox, py - oy)
 }
 
 /// Lets go and answers once the window has glided to rest, with where that is.
@@ -209,4 +240,35 @@ pub fn pet_menu(app: AppHandle) -> Result<(), String> {
         .build()
         .map_err(|e| e.to_string())?;
     w.popup_menu(&menu).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::on_screen;
+
+    // a 1920 × 1040 work area with a shorter 1280 × 680 one to its right; the pet 100 × 110 at (200, 400) in the window
+    const MONS: [[f64; 4]; 2] = [[0.0, 0.0, 1920.0, 1040.0], [1920.0, 0.0, 1280.0, 680.0]];
+    const PET: [f64; 5] = [200.0, 400.0, 100.0, 110.0, 38.0];
+
+    #[test]
+    fn free_on_screen() {
+        assert_eq!(on_screen(&MONS, PET, 500.0, 100.0), (500.0, 100.0));
+    }
+
+    #[test]
+    fn stops_at_the_edges_with_room_for_the_keys() {
+        assert_eq!(on_screen(&MONS, PET, -400.0, 900.0), (-200.0, 1040.0 - 38.0 - 110.0 - 400.0));
+        assert_eq!(on_screen(&MONS, PET, 100.0, -500.0), (100.0, 38.0 - 400.0));
+    }
+
+    #[test]
+    fn keeps_to_the_nearest_monitor() {
+        // under the shorter monitor, past its bottom: stopped on it, not pulled back to the first
+        assert_eq!(on_screen(&MONS, PET, 2500.0, 900.0), (2500.0, 680.0 - 38.0 - 110.0 - 400.0));
+    }
+
+    #[test]
+    fn no_monitors_no_limits() {
+        assert_eq!(on_screen(&[], PET, -9000.0, 9000.0), (-9000.0, 9000.0));
+    }
 }

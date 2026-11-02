@@ -1,18 +1,21 @@
 /* The pet overlay window. Rust (overlay.rs) keeps it on top and click-through outside the rects this file
    reports, follows the cursor while dragging and streams the cursor position; this file owns the layout.
-   Layout: the window is bigger than the pet. Where the pet sits on its monitor picks the placement, like
-   Codex's top-/bottom-start/end: in the upper part of the screen the pills hang below it, otherwise they
-   stack above; on the right half they align to the pet's right edge and grow left, on the left half the
-   reverse. The pet's screen spot (settings petX/petY, physical px) is fixed; the window moves around it.
+   Layout: the window is bigger than the pet, which sits in its middle with room for the pills on every side.
+   Where the pet sits on its monitor picks the placement, like Codex's top-/bottom-start/end: in the upper part
+   of the screen the pills hang below it, otherwise they stack above; on the right half they align to the pet's
+   right edge and grow left, on the left half the reverse. Dragging changes it as the pet crosses those lines,
+   and overlay.rs stops the pet at the screen's edges as it goes. The pet's screen spot (settings petX/petY,
+   physical px) is fixed; the window moves around it.
    Several chats make a deck: the front pill is a chat that needs you, else the one closest to completion
    (sessions.rs orders the list),
    with up to two more peeking out behind it on the side away from the pet; finished chats sit at the back,
    tinted and labelled Done. Collegiapp countdowns (collegiapp.rs: a class from an hour out, work from a day out) always queue
    behind the chats, so they're in front only while Claude has nothing to show; their clocks tick here every second.
    While the pills are hidden, a bell with the number of chats brings them back. Hovering the deck fans it out into
-   every chat that fits; clicking the pet pins that open. Sprite state follows the most urgent session
-   (waiting > failed > review > running > idle); hover jumps, dragging runs left/right (with the pills trailing
-   on a spring, and pets set to tilt leaning into it), v2 pets look toward a nearby cursor, the app says hello
+   every chat that fits; clicking the pet pins that open. Every pill moves on its own springs (see motion): out of
+   the deck and back, to a new place, in and out, and trailing the pet on a chain while it's dragged. Sprite state
+   follows the most urgent session (waiting > failed > review > running > idle); hover jumps, dragging runs
+   left/right (pets set to tilt lean into it), v2 pets look toward a nearby cursor, the app says hello
    with a wave. The pills wear the theme in use, the night theme too (themes.js pills()). Its size is a share of
    Codex's (petScale: Settings' slider, the Size menu, Ctrl-scroll or a pinch over the pet). */
 (function () {
@@ -21,7 +24,8 @@
   const CODEX_W = 112.64, MIN_SCALE = 0.5, MAX_SCALE = 2;
   const scaleOf = (s) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, +(s && s.petScale) || 1));
   // PAD is the clear room round the window's parts the pills can swing into while dragged; KEYS is the band
-  // the hover keys pop out into, under the pet (over its head when the pills hang below)
+  // the hover keys pop out into, under the pet (over its head when the pills hang below). The window has room
+  // for the pills and the keys on both sides of the pet, so they change sides mid-drag without it moving.
   const PAD = 30, GAP = 6, KEYS = 38, PILL_W = 300, STACK_H = 360;
   const PRIO = { waiting: 0, failed: 1, review: 2, running: 3, idle: 4 };
   const STAT = {
@@ -37,7 +41,7 @@
     exam: ["exams", "Exam"], quiz: ["exams", "Quiz"], lab: ["lab", "Due"],
   };
 
-  const elPet = $("#pet"), elSprite = $("#sprite"), elStack = $("#stack"), elBadge = $("#badge"), elTools = $("#tools");
+  const elPet = $("#pet"), elSprite = $("#sprite"), elStack = $("#stack"), elGhosts = $("#ghosts"), elBadge = $("#badge"), elTools = $("#tools");
   const player = new sprite.Player(elSprite);
   const calm = matchMedia("(prefers-reduced-motion: reduce)");
 
@@ -57,9 +61,12 @@
     elSprite.animate(POP, { duration: 260, easing: "ease-out" });
   };
   let S = null, pet = null, sessions = [], countdowns = [], shown = [];
-  let dims = { S: CODEX_W, SH: CODEX_W * 208 / 192, W: 0, H: 0 };
-  let place = { v: "above", h: "end" }, scale = 1;
+  let dims = { S: CODEX_W, SH: CODEX_W * 208 / 192, side: 0, room: 0, W: 0, H: 0 };
+  let place = { v: "above", h: "end" }, placed = false, scale = 1, monitors = [];
   let expanded = false, folded = false, fan = false, fanTimer = null, hoverPet = false, transient = null, drag = null;
+  // what the stack shows (none · deck · list); the deck keeps up to DECK pills, the ones past its layers hidden
+  let shape = "none";
+  const DECK = 9;
   let awakeUntil = Date.now() + 2300, lastPulse = 0, lastTop = "", sentRects = "";
 
   // render() keeps the fold key's icon and title current
@@ -73,30 +80,43 @@
 
   /* ───────── geometry ───────── */
   function computeDims() {
-    const s = CODEX_W * scaleOf(S), sh = (s * 208) / 192;
-    dims = { S: s, SH: sh, W: Math.ceil(Math.max(PILL_W, s) + 2 * PAD), H: Math.ceil(sh + GAP + STACK_H + KEYS + 2 * PAD) };
+    const s = CODEX_W * scaleOf(S), sh = (s * 208) / 192, side = Math.max(0, PILL_W - s), room = Math.max(GAP + STACK_H, KEYS);
+    dims = { S: s, SH: sh, side, room, W: Math.ceil(s + 2 * side + 2 * PAD), H: Math.ceil(sh + 2 * room + 2 * PAD) };
     document.documentElement.style.setProperty("--pw", s + "px");
   }
-  const petOffset = () => ({ x: place.h === "end" ? dims.W - PAD - dims.S : PAD, y: place.v === "above" ? dims.H - PAD - KEYS - dims.SH : PAD + KEYS });
-  const monitorAt = (mons, x, y) => mons.find((m) => x >= m[0] && y >= m[1] && x < m[0] + m[2] && y < m[1] + m[3]);
+  const petOffset = () => ({ x: PAD + dims.side, y: PAD + dims.room });
+  // the monitor under a point, else the nearest one (overlay.rs on_screen picks the same)
+  function monitorNear(mons, x, y) {
+    const gap = (m) => Math.hypot(Math.max(m[0] - x, x - m[0] - m[2], 0), Math.max(m[1] - y, y - m[1] - m[3], 0));
+    return mons.reduce((a, m) => (!a || gap(m) < gap(a) ? m : a), null);
+  }
+  /* The pills' side for a pet centred on (cx, cy). `was`, the side they're on, holds until the pet is 4% of the
+     screen past the line, so a drag along it doesn't flip them back and forth. */
+  function placeOn(mon, cx, cy, was) {
+    const m = was ? 0.04 : 0, v = 0.45 + (was && was.v === "below" ? m : -m), h = 0.5 + (was && was.h === "end" ? -m : m);
+    return { v: (cy - mon[1]) / mon[3] < v ? "below" : "above", h: (cx - mon[0]) / mon[2] > h ? "end" : "start" };
+  }
 
   async function placeWindow(save) {
     let info;
     try { info = await invoke("overlay_info"); } catch (e) { return; }
     scale = info.scale || 1;
+    monitors = info.monitors;
     const pw = dims.S * scale, ph = dims.SH * scale;
     let px = S.petX, py = S.petY;
     if (px == null || py == null) {
-      const m = monitorAt(info.monitors, info.x + 10, info.y + 10) || info.monitors[0] || [0, 0, 1280, 720];
+      const m = monitorNear(info.monitors, info.x + 10, info.y + 10) || [0, 0, 1280, 720];
       px = m[0] + m[2] - pw - 28 * scale; py = m[1] + m[3] - ph - KEYS * scale;
     }
-    const mon = monitorAt(info.monitors, px + pw / 2, py + ph / 2) || info.monitors[0] || [0, 0, 1280, 720];
-    // the pet keeps the keys' band on screen above and below it
+    const mon = monitorNear(info.monitors, px + pw / 2, py + ph / 2) || [0, 0, 1280, 720];
+    // the pet keeps the keys' band on screen above and below it (overlay.rs keeps it there while it's dragged)
     px = Math.min(Math.max(px, mon[0]), mon[0] + mon[2] - pw);
     py = Math.min(Math.max(py, mon[1] + KEYS * scale), mon[1] + mon[3] - ph - KEYS * scale);
-    place = { v: py + ph / 2 - mon[1] < mon[3] * 0.45 ? "below" : "above", h: px + pw / 2 - mon[0] > mon[2] / 2 ? "end" : "start" };
-    const off = petOffset();
-    await invoke("overlay_set", { x: Math.round(px - off.x * scale), y: Math.round(py - off.y * scale), width: dims.W, height: dims.H }).catch(() => {});
+    place = placeOn(mon, px + pw / 2, py + ph / 2, placed && place);
+    placed = true;
+    const off = petOffset(), wx = Math.round(px - off.x * scale), wy = Math.round(py - off.y * scale);
+    await invoke("overlay_set", { x: wx, y: wy, width: dims.W, height: dims.H }).catch(() => {});
+    shiftBodies((info.x - wx) / scale, (info.y - wy) / scale);
     layout();
     if (save) { S.petX = px; S.petY = py; invoke("set_settings", { patch: { petX: px, petY: py } }).catch(() => {}); }
     // a move onto a monitor with another scale resizes the window; place once more with the new scale
@@ -105,26 +125,45 @@
   }
 
   function layout() {
-    const off = petOffset();
+    const off = petOffset(), sw = Math.max(PILL_W, dims.S), above = place.v === "above";
     Object.assign(elPet.style, { left: off.x + "px", top: off.y + "px" });
     elStack.className = `stack ${place.v} ${place.h}`;
-    elPet.classList.toggle("keys-up", place.v === "below");
+    elPet.classList.toggle("keys-up", !above);
     Object.assign(elStack.style, {
-      width: dims.W - 2 * PAD + "px", maxHeight: STACK_H + "px", left: PAD + "px",
-      top: place.v === "below" ? off.y + dims.SH + GAP + "px" : "", bottom: place.v === "above" ? dims.H - off.y + GAP + "px" : "",
+      width: sw + "px", maxHeight: STACK_H + "px", left: (place.h === "end" ? off.x + dims.S - sw : off.x) + "px",
+      top: above ? "" : off.y + dims.SH + GAP + "px", bottom: above ? dims.H - off.y + GAP + "px" : "",
     });
+    if (shape === "deck") stackLayers();
+    settle("");
     requestAnimationFrame(sendRects);
   }
 
+  /* While the pet is dragged (and while it glides to rest) the pills change sides as soon as it crosses a line. */
+  function follow(x, y) {
+    const off = petOffset(), pw = dims.S * scale, ph = dims.SH * scale;
+    const cx = x + off.x * scale + pw / 2, cy = y + off.y * scale + ph / 2, mon = monitorNear(monitors, cx, cy);
+    if (!mon) return;
+    const next = placeOn(mon, cx, cy, place);
+    if (next.v !== place.v || next.h !== place.h) { place = next; layout(); }
+  }
+
+  /* A part's box as laid out, before its springs move it: stage px, which are the window's CSS px. */
+  function box(el) {
+    let x = 0, y = 0;
+    for (let e = el; e && e.id !== "stage"; e = e.offsetParent) { x += e.offsetLeft; y += e.offsetTop; }
+    return { x, y, w: el.offsetWidth, h: el.offsetHeight };
+  }
+
   /* only the pet, its keys (while they're out) and the pills take clicks; everything else falls through to the
-     desktop. The keys stay laid out to animate, so they count only while the pet is hovered. */
+     desktop. The keys stay laid out to animate, so they count only while the pet is hovered. The pills count
+     where they're laid out, so they take the cursor where they're headed while they spring there. */
   const keysOut = () => hoverPet && !drag;
+  const targets = () => elStack.querySelectorAll(".pill:not(.lyh), .more");
   function sendRects() {
-    const parts = [elPet, elBadge, ...elStack.querySelectorAll(".pill, .layer, .more")].concat(keysOut() ? [elTools] : []);
-    const rects = parts.filter((e) => e.offsetParent !== null || e === elPet).map((e) => {
-      const r = e.getBoundingClientRect();
-      return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)];
-    });
+    const parts = [elPet, elBadge].concat(keysOut() ? [elTools] : []).filter((e) => e.offsetParent !== null || e === elPet);
+    const rects = parts.map((e) => { const r = e.getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; })
+      .concat([...targets()].map((e) => { const r = box(e); return [r.x, r.y, r.w, r.h]; }))
+      .map((r) => r.map(Math.round));
     const k = JSON.stringify(rects);
     if (k !== sentRects) { sentRects = k; invoke("set_hit_rects", { rects }).catch(() => {}); }
   }
@@ -144,8 +183,15 @@
 
   /* ───────── pills ───────── */
   const behindHtml = (n) => (n ? `<span class="nn" title="${n} more">+${n}</span>` : "");
+  /* A pill's opening tag. `k` keys its springs (motion), so a pill keeps moving through redraws. The deck's layers
+     are pills too, their faces hidden (pet.css .ly): `ly` 1 and 2 peek out behind the front one, 3 on wait hidden. */
+  function tag(cls, k, attrs, tip, ly) {
+    const role = !ly ? "" : ly < 3 ? ` ly ly${ly}` : " ly lyh";
+    return `<div class="pill ${cls}${role}" data-k="${esc(k)}" ${attrs}` +
+      (ly ? ` data-ly="${ly}" data-open title="Show them all">` : ` title="${esc(tip)}">`);
+  }
 
-  function pillHtml(s, exp, behind) {
+  function pillHtml(s, exp, behind, ly) {
     const st = STAT[s.status] || STAT.idle;
     const pct = s.status !== "review" && s.status !== "idle" && s.progress != null ? s.progress : null;
     let sub = s.subtitle || (s.status === "running" ? "Thinking" : "");
@@ -153,7 +199,7 @@
     // chats the desktop app started open there (open_chat); terminal chats just open the app
     const act = s.id === "_idle" ? "" : s.hostSession ? "Click to open this chat in Claude" : "Click to open Claude";
     const tip = [s.title, s.step, s.subtitle, s.cwd, act].filter(Boolean).join("\n");
-    return `<div class="pill s-${s.status}${exp ? " exp" : ""}" data-id="${esc(s.id)}" title="${esc(tip)}">` +
+    return tag(`s-${s.status}${exp ? " exp" : ""}`, "s:" + s.id, `data-id="${esc(s.id)}"`, tip, ly) +
       `<span class="st">${ic(st.icon)}</span>` +
       `<span class="tx"><span class="t1"><b class="ti">${esc(s.title || "Claude")}</b>${st.label ? `<span class="lb">${st.label}</span>` : ""}` +
       behindHtml(behind) + `</span>` +
@@ -189,7 +235,7 @@
   const dayOf = (ms) => (new Date(ms).toDateString() === new Date().toDateString() ? "Today" : "Tomorrow");
   const squash = (s) => String(s || "").toLowerCase().replace(/\s+/g, "");
 
-  function cdHtml(c, exp, behind) {
+  function cdHtml(c, exp, behind, ly) {
     const now = Date.now(), ph = cdPhase(c, now);
     const [icon, name] = KINDS[c.kind] || ["work", "Due"];
     const label = ph === "live" ? (c.kind === "class" ? "In class" : "On now") : ph === "now" ? "Now" : name;
@@ -199,7 +245,7 @@
     const sub = [course, c.location, when].filter(Boolean).join(" · ");
     const tip = [c.title, sub, "Click to open Collegiapp"].join("\n");
     const kc = c.color >= 1 && c.color <= 6 ? ` style="--kc:var(--k${c.color})"` : "";
-    return `<div class="pill cd p-${ph}${exp ? " exp" : ""}" data-cd="${esc(c.id)}"${kc} title="${esc(tip)}">` +
+    return tag(`cd p-${ph}${exp ? " exp" : ""}`, "c:" + c.key, `data-cd="${esc(c.id)}"${kc}`, tip, ly) +
       `<span class="st">${ic(icon)}</span>` +
       `<span class="tx"><span class="t1"><b class="ti">${esc(c.title)}</b><span class="lb">${label}</span>${behindHtml(behind)}</span>` +
       `<span class="t2">${esc(sub)}</span></span>` +
@@ -207,7 +253,7 @@
       `<button class="x" data-xcd="${esc(c.key)}" title="Hide this countdown" aria-label="Hide this countdown">${ic("close")}</button></div>`;
   }
 
-  const anyHtml = (x, exp, behind) => (countdowns.includes(x) ? cdHtml(x, exp, behind) : pillHtml(x, exp, behind));
+  const anyHtml = (x, exp, behind, ly) => (countdowns.includes(x) ? cdHtml(x, exp, behind, ly) : pillHtml(x, exp, behind, ly));
 
   function render() {
     if (!S) return;
@@ -219,15 +265,19 @@
     if (!list.length && mode === "always") list = [{ id: "_idle", status: "idle", title: "Claude is idle", subtitle: "Session updates show here" }];
     const show = mode !== "never" && !folded && list.length > 0;
     const open = show && list.length > 1 && (expanded || fan);
+    const next = !show ? "none" : open ? "list" : "deck";
+    const kind = shape === "deck" && next === "list" ? "open" : shape === "list" && next === "deck" ? "close" : "";
+    shape = next;
     if (!show) elStack.innerHTML = "";
     else if (open) {
       elStack.innerHTML = list.map((s) => anyHtml(s, expanded)).join("");
       fit(list.length);
     } else {
-      const behind = Math.min(2, list.length - 1);
-      elStack.innerHTML = `<div class="deck">${anyHtml(list[0], expanded, list.length - 1)}` +
-        Array.from({ length: behind }, (_, i) => `<span class="layer l${i + 1}" data-open title="Show them all"></span>`).join("") + `</div>`;
+      // the next ones wait behind the front pill as its layers, so opening the deck brings each one out from there
+      elStack.innerHTML = anyHtml(list[0], expanded, list.length - 1) + list.slice(1, DECK).map((s, i) => anyHtml(s, false, 0, i + 1)).join("");
+      stackLayers();
     }
+    settle(kind);
     // the bell counts what you can't see while the pills are hidden (with Pills set to Never, just the chats);
     // clicking it shows them
     const n = sessions.length, m = mode === "never" ? 0 : cds.length;
@@ -256,16 +306,32 @@
     let n = pills.length;
     while (n > 1 && over()) pills[--n].remove();
     if (n < total) {
-      elStack.insertAdjacentHTML("beforeend", `<button class="more" data-app title="Open the Claude view">+${total - n} more</button>`);
+      elStack.insertAdjacentHTML("beforeend", `<button class="more" data-app data-k="more" title="Open the Claude view">+${total - n} more</button>`);
       while (n > 1 && over()) { pills[--n].remove(); elStack.querySelector(".more").textContent = `+${total - n} more`; }
     }
   }
 
-  /* Hovering the deck fans it out after a beat; leaving the pills (gaps included) folds it back. */
+  /* The deck's layers peek out behind the front pill on the side away from the pet, 7 and 13 px, each 10 px
+     narrower a side than the one before; the rest wait hidden behind the second. */
+  function stackLayers() {
+    const front = elStack.firstElementChild;
+    if (!front) return;
+    const away = place.v === "above" ? -1 : 1;
+    for (const el of elStack.querySelectorAll(".ly")) {
+      const n = Math.min(2, +el.dataset.ly);
+      Object.assign(el.style, {
+        left: front.offsetLeft + 10 * n + "px", top: front.offsetTop + away * (n === 1 ? 7 : 13) + "px",
+        width: front.offsetWidth - 20 * n + "px", height: front.offsetHeight + "px",
+      });
+    }
+  }
+
+  /* Hovering the deck fans it out after a beat; leaving the pills (gaps included) folds it back. The pills count
+     where they're headed, so one still springing out doesn't fold the deck again. */
   function overPills(x, y, pad) {
-    for (const el of elStack.querySelectorAll(".pill, .layer, .more")) {
-      const r = el.getBoundingClientRect();
-      if (x >= r.left - pad && x < r.right + pad && y >= r.top - pad && y < r.bottom + pad) return true;
+    for (const el of targets()) {
+      const r = box(el);
+      if (x >= r.x - pad && x < r.x + r.w + pad && y >= r.y - pad && y < r.y + r.h + pad) return true;
     }
     return false;
   }
@@ -393,43 +459,244 @@
   // while the keys are out they count as the pet, along with the gap between them, so the cursor can reach them
   const inPet = (x, y) => inRect(elPet, x, y) || (hoverPet && inRect(elTools, x, y, 6));
 
-  /* While the pet is dragged the pills ride on a spring. Rust reports the window's eased position and velocity
-     ("drag-move", physical px); the stack is a mass pulled after the window in screen space, damped mostly
-     against the window's own motion, so every speed-up, slow-down and turn moves it, and a little against the
-     air, so it trails while moving. It leans on a second, slower spring, swings to rest after the drop and
-     stays inside PAD. Fixed substeps keep the motion the same at any frame rate. */
+  /* ───────── motion ───────── */
+  /* Every part of the stack (each pill, the deck's layers, the "+n more" key) is a body with its own springs, keyed
+     by its chat or countdown (data-k) so it keeps moving through redraws. A redraw measures where each part is
+     laid out now (its slot) and carries the body over from where it was drawn, FLIP-style: the corner by the pet
+     takes the offset, the plate (pet.css ::before) the size, so the face never stretches. From there:
+     - Opening the deck, each pill comes out from behind the front one, the nearest first, its plate growing out
+       of its layer and its face fading in; closing tucks them back in from the far end. A face shows only once its
+       plate about fits it, so a pill that grows (a longer title, a click to expand) never spills past its plate.
+     - A new part pops out from the pet; a part that's gone fades and shrinks toward the pet where it was, under
+       the stack (#ghosts). Changing sides mid-drag sends every pill round to its new spot.
+     - While the pet is dragged the pills trail it on a chain. Rust reports the window's eased position and
+       velocity ("drag-move", physical px); the front pill is a mass pulled after the window, damped mostly
+       against the window's own motion, so every speed-up, slow-down and turn moves it, and a little against the
+       air, so it trails while moving; each pill after it hangs the same way on the one before, so the far end
+       lags, swings and settles a beat after the near one. Each leans on a slower spring about the stack's corner
+       by the pet, toward its trail capped inside PAD (so about 2° at most, however fast the drag), and SWAY
+       scales what all that shows.
+     The springs run in fixed substeps, so the motion is the same at any frame rate, and stop once everything is
+     still, leaving no inline styles behind. Reduced motion skips all of it. */
   const K = 190, C_REL = 9.8, C_AIR = 4, K_LEAN = 140, C_LEAN = 10, LEAN = 0.1, ROOM = PAD - 8, STEP = 1 / 240;
-  const trail = { on: false, x: 0, y: 0, vx: 0, vy: 0, ax: 0, ay: 0, avx: 0, avy: 0, seen: 0, th: 0, vth: 0, t: 0 };
+  // each link of the chain: stiff and well damped, so the far end swings a little more than the near one, not wildly
+  const K_LINK = 900, C_LINK = 54, C_LINK_AIR = 1;
+  // how much of the drag's trail and lean shows: 70% of the spring's, so a fast drag stays calm
+  const SWAY = 0.7;
+  // moving between slots: a quick settle with a touch of overshoot; the pop's scale is a little bouncier
+  const W_L = 21, K_L = W_L * W_L, C_L = 2 * 0.68 * W_L, K_S = 400, C_S = 22;
+  // opening fans the pills out from the nearest, 26 ms apart; closing tucks them in from the far end, 18 ms apart
+  const FAN_OUT = 0.026, FAN_IN = 0.018, POP_GAP = 0.04;
+  // what each role settles to: opacity, the face's opacity (--c) and how deep in the deck it is (--m)
+  const REST = { pill: [1, 1, 0], more: [1, 1, 0], ly1: [1, 0, 1], ly2: [1, 0, 2], lyh: [0, 0, 2] };
+  const VARS = ["--c", "--m", "--px", "--py"];
+  const trail = { on: false, avx: 0, avy: 0, seen: -1e9 };
   const soft = (r) => ROOM * Math.tanh(r / ROOM);
+  const ease = (v, to, rate, h) => to + (v - to) * Math.exp(-rate * h);
+  let bodies = new Map(), ghosts = [], running = false, last = 0;
+
+  const roleOf = (el) => (el.classList.contains("more") ? "more" : el.classList.contains("lyh") ? "lyh" :
+    el.classList.contains("ly1") ? "ly1" : el.classList.contains("ly2") ? "ly2" : "pill");
+  const born = () => ({
+    lx: 0, ly: 0, lvx: 0, lvy: 0, px: 1, py: 1, pvx: 0, pvy: 0, s: 1, vs: 0, a: 1, c: 1, m: 0, wait: 0,
+    dx: 0, dy: 0, dvx: trail.on ? trail.avx : 0, dvy: trail.on ? trail.avy : 0, th: 0, vth: 0, slot: null, drawn: false,
+  });
+  // the window's velocity as last reported (until the reports stop coming), and whether a drag is in play
+  function windowAt(t) {
+    const on = t - trail.seen < 60, wx = on ? trail.avx : 0, wy = on ? trail.avy : 0;
+    return { wx, wy, moving: !!(drag && drag.moved) || Math.abs(wx) + Math.abs(wy) >= 1 };
+  }
+  // the box a body is drawn in, leaving out the drag: its plate's size, placed by the corner by the pet
+  function drawnBox(b) {
+    const { x, y, w, h } = b.slot, W = w * b.px, H = h * b.py;
+    const cx = (b.end ? x + w : x) + b.lx, cy = (b.above ? y + h : y) + b.ly;
+    return { x: b.end ? cx - W : cx, y: b.above ? cy - H : cy, w: W, h: H };
+  }
+
+  /* After a redraw (or a new place): matches the stack's parts to their bodies and carries each over. `kind` is
+     "open" or "close" when the deck just fanned out or folded up. */
+  function settle(kind) {
+    const els = [...elStack.children], end = place.h === "end", above = place.v === "above";
+    els.forEach((el, i) => { el.style.zIndex = 40 - i; });
+    if (calm.matches) {
+      for (const g of ghosts) g.el.remove();
+      ghosts = []; bodies = new Map();
+      return;
+    }
+    const st = box(elStack), pv = { x: st.x + (end ? st.w : 0), y: st.y + (above ? st.h : 0) };
+    const live = new Map(), fresh = [], turned = [];
+    els.forEach((el, rank) => {
+      const k = el.dataset.k, slot = box(el), role = roleOf(el);
+      let b = bodies.get(k);
+      if (!b) { b = born(); fresh.push(b); }
+      else if (b.slot && slot.w && slot.h) {
+        const was = drawnBox(b);
+        b.pvx *= b.slot.w / slot.w; b.pvy *= b.slot.h / slot.h;
+        b.px = was.w / slot.w; b.py = was.h / slot.h;
+        b.lx = (end ? was.x + was.w : was.x) - (end ? slot.x + slot.w : slot.x);
+        b.ly = (above ? was.y + was.h : was.y) - (above ? slot.y + slot.h : slot.y);
+        // the lean's sign goes with the side, so a flip keeps the pill turned as it was
+        if (b.above !== above) { b.th = -b.th; b.vth = -b.vth; }
+        const out = role === "pill" || role === "more", wasOut = b.role === "pill" || b.role === "more";
+        // a layer lays its face out narrower, so a pill turning into one drops most of its face at once
+        if (wasOut && !out) b.c = Math.min(b.c, 0.5);
+        if (kind && out !== wasOut) turned.push(b);
+      }
+      const [ta, tc, tm] = REST[role];
+      Object.assign(b, { k, el, role, rank, slot, end, above, pv, ta, tc, tm, ts: 1 });
+      live.set(k, b);
+    });
+    // out of the deck from the nearest, back into it from the farthest
+    const far = Math.max(0, ...turned.map((b) => b.rank));
+    for (const b of turned) b.wait = kind === "open" ? b.rank * FAN_OUT : (far - b.rank) * FAN_IN;
+    const first = Math.min(...fresh.map((b) => b.rank));
+    for (const b of fresh) {
+      Object.assign(b, { a: b.ta, c: b.tc, m: b.tm });
+      if (!b.ta) continue;
+      // a new part pops out from behind the pet
+      Object.assign(b, { a: 0, s: 0.6, ly: above ? 14 : -14, wait: kind === "open" ? b.rank * FAN_OUT : (b.rank - first) * POP_GAP });
+    }
+    for (const [k, b] of bodies) if (!live.has(k)) leave(b);
+    bodies = live;
+    const { wx, wy, moving } = windowAt(performance.now());
+    let busy = false;
+    for (const b of bodies.values()) busy = draw(b, wx, wy, moving) || busy;
+    if (busy) kick();
+  }
+
+  /* The window moved under the stack (a new size, or the pet sent to its corner). A short way, the pills keep
+     their spot on screen and spring to their new ones; a long way, they pop in afresh. */
+  function shiftBodies(dx, dy) {
+    if (!dx && !dy) return;
+    for (const g of ghosts) g.el.remove();
+    ghosts = [];
+    if (Math.hypot(dx, dy) > 80) { bodies = new Map(); return; }
+    for (const b of bodies.values()) if (b.slot) b.slot = { ...b.slot, x: b.slot.x + dx, y: b.slot.y + dy };
+  }
+
+  /* A part that's gone: its element stays where it was drawn, in the layer under the stack, fading out. */
+  function leave(b) {
+    if (calm.matches || b.a < 0.05 || !b.slot) return;
+    const el = b.el, r = b.slot;
+    el.classList.add("gone");
+    el.classList.remove("hover");
+    delete el.dataset.k;
+    Object.assign(el.style, { left: r.x + "px", top: r.y + "px", width: r.w + "px", height: r.h + "px" });
+    el.style.setProperty("--ox", b.end ? "right" : "left");
+    el.style.setProperty("--oy", b.above ? "bottom" : "top");
+    elGhosts.append(el);
+    Object.assign(b, { role: "gone", ta: 0, tc: b.c, tm: b.m, ts: 0.7, wait: 0 });
+    ghosts.push(b);
+    kick();
+  }
+
+  function kick() {
+    if (running || calm.matches) return;
+    running = true;
+    last = performance.now();
+    requestAnimationFrame(frame);
+  }
+
+  function step(b, prev, wx, wy, h) {
+    // a face on its way out doesn't wait its turn
+    if (b.c > b.tc) b.c = ease(b.c, b.tc, 28, h);
+    if (b.wait > 0) b.wait -= h;
+    else {
+      b.lvx += (-K_L * b.lx - C_L * b.lvx) * h; b.lx += b.lvx * h;
+      b.lvy += (-K_L * b.ly - C_L * b.lvy) * h; b.ly += b.lvy * h;
+      b.pvx += (K_L * (1 - b.px) - C_L * b.pvx) * h; b.px += b.pvx * h;
+      b.pvy += (K_L * (1 - b.py) - C_L * b.pvy) * h; b.py += b.pvy * h;
+      b.vs += (K_S * (b.ts - b.s) - C_S * b.vs) * h; b.s += b.vs * h;
+      b.a = ease(b.a, b.ta, b.ta > b.a ? 16 : 13, h);
+      if (b.c < b.tc) b.c = ease(b.c, b.tc, 11, h);
+      b.m = ease(b.m, b.tm, 12, h);
+    }
+    // the drag: the front pill hangs on the window, every other on the one before it; velocities are on screen
+    if (prev) {
+      b.dvx += (K_LINK * (prev.dx - b.dx) - C_LINK * (b.dvx - prev.dvx) - C_LINK_AIR * b.dvx) * h;
+      b.dvy += (K_LINK * (prev.dy - b.dy) - C_LINK * (b.dvy - prev.dvy) - C_LINK_AIR * b.dvy) * h;
+    } else {
+      b.dvx += (-K * b.dx - C_REL * (b.dvx - wx) - C_AIR * b.dvx) * h;
+      b.dvy += (-K * b.dy - C_REL * (b.dvy - wy) - C_AIR * b.dvy) * h;
+    }
+    b.dx += (b.dvx - wx) * h; b.dy += (b.dvy - wy) * h;
+    // the lean follows the trail as it shows, capped like it, so a fast drag doesn't tip the pills over
+    b.vth += (K_LEAN * (soft(b.dx) * LEAN - b.th) - C_LEAN * b.vth) * h; b.th += b.vth * h;
+  }
+
+  /* Puts a body on screen; once it's still, snaps it to rest, clears its inline styles and says so. */
+  function draw(b, wx, wy, moving) {
+    const el = b.el;
+    const still = !moving && b.wait <= 0 && Math.abs(b.lx) + Math.abs(b.ly) < 0.4 && Math.abs(b.lvx) + Math.abs(b.lvy) < 4 &&
+      Math.abs(b.px - 1) + Math.abs(b.py - 1) < 0.003 && Math.abs(b.pvx) + Math.abs(b.pvy) < 0.04 &&
+      Math.abs(b.s - b.ts) < 0.003 && Math.abs(b.vs) < 0.04 && Math.abs(b.a - b.ta) < 0.01 && Math.abs(b.c - b.tc) < 0.01 &&
+      Math.abs(b.m - b.tm) < 0.01 && Math.abs(b.dx) + Math.abs(b.dy) < 0.2 && Math.abs(b.dvx - wx) + Math.abs(b.dvy - wy) < 2 &&
+      Math.abs(b.th) < 0.02 && Math.abs(b.vth) < 0.3;
+    if (still) {
+      Object.assign(b, { lx: 0, ly: 0, lvx: 0, lvy: 0, px: 1, py: 1, pvx: 0, pvy: 0, s: b.ts, vs: 0, a: b.ta, c: b.tc, m: b.tm });
+      Object.assign(b, { dx: 0, dy: 0, dvx: wx, dvy: wy, th: 0, vth: 0 });
+      if (b.drawn) {
+        b.drawn = false;
+        el.style.transform = el.style.opacity = "";
+        for (const p of VARS) el.style.removeProperty(p);
+      }
+      return false;
+    }
+    // trailing to the left tips the far end of the stack left: anticlockwise above the pet, clockwise below. It
+    // turns about the stack's corner by the pet (vx, vy); the pop's scale is about the part's own (ox, oy).
+    const tx = b.lx + SWAY * soft(b.dx), ty = b.ly + SWAY * soft(b.dy), th = SWAY * (b.above ? b.th : -b.th);
+    const { x, y, w, h } = b.slot, ox = b.end ? w : 0, oy = b.above ? h : 0, vx = b.pv.x - x, vy = b.pv.y - y;
+    const f = (v) => v.toFixed(2);
+    el.style.transform = `translate(${f(tx + vx)}px, ${f(ty + vy)}px) rotate(${th.toFixed(3)}deg) ` +
+      `translate(${f(ox - vx)}px, ${f(oy - vy)}px) scale(${b.s.toFixed(4)}) translate(${f(-ox)}px, ${f(-oy)}px)`;
+    // the face shows once its plate has about grown to fit it (within 4 px), so it never spills past the edge
+    const short = Math.max(0, (1 - b.px) * w, (1 - b.py) * h), face = b.c * Math.min(1, Math.max(0, 1 - (short - 4) / 12));
+    el.style.opacity = b.a.toFixed(3);
+    el.style.setProperty("--c", face.toFixed(3));
+    el.style.setProperty("--m", b.m.toFixed(3));
+    el.style.setProperty("--px", b.px.toFixed(4));
+    el.style.setProperty("--py", b.py.toFixed(4));
+    b.drawn = true;
+    return true;
+  }
+
+  function frame(now) {
+    const dt = Math.min(0.05, Math.max(0, (now - last) / 1000)), n = Math.max(1, Math.ceil(dt / STEP)), h = dt / n;
+    last = now;
+    const chain = [...bodies.values()].sort((a, b) => a.rank - b.rank);
+    for (let i = 1; i <= n; i++) {
+      const { wx, wy } = windowAt(now - (n - i) * h * 1000);
+      let prev = null;
+      for (const b of chain) { step(b, prev, wx, wy, h); prev = b; }
+      for (const g of ghosts) step(g, null, wx, wy, h);
+    }
+    const { wx, wy, moving } = windowAt(now);
+    let busy = moving;
+    for (const b of chain) busy = draw(b, wx, wy, moving) || busy;
+    ghosts = ghosts.filter((g) => {
+      if (draw(g, wx, wy, moving) && g.a > 0.01) return true;
+      g.el.remove();
+      return false;
+    });
+    if (busy || ghosts.length) { requestAnimationFrame(frame); return; }
+    running = false;
+    trail.on = false;
+    requestAnimationFrame(sendRects);
+  }
+
   on("drag-move", ([x, y, vx, vy]) => {
     const now = performance.now();
-    Object.assign(trail, { ax: x / scale, ay: y / scale, avx: vx / scale, avy: vy / scale, seen: now });
+    Object.assign(trail, { avx: vx / scale, avy: vy / scale, seen: now });
+    follow(x, y);
     if (pet && pet.tilt && !tilt.on && !calm.matches) { Object.assign(tilt, { on: true, t: now }); requestAnimationFrame(tiltFrame); }
-    if (trail.on || calm.matches) return;
-    Object.assign(trail, { on: true, x: trail.ax, y: trail.ay, vx: trail.avx, vy: trail.avy, th: 0, vth: 0, t: now });
-    requestAnimationFrame(trailFrame);
-  });
-  function trailFrame(now) {
-    const T = trail, dt = Math.min(0.05, Math.max(0, (now - T.t) / 1000)), n = Math.max(1, Math.ceil(dt / STEP)), h = dt / n;
-    let ax = T.ax, ay = T.ay;
-    for (let i = 1; i <= n; i++) {
-      // the window keeps moving between reports, so carry it on by its velocity (briefly, in case they stop)
-      const age = Math.min(0.02, Math.max(0, (T.t - T.seen) / 1000 + i * h));
-      ax = T.ax + T.avx * age; ay = T.ay + T.avy * age;
-      T.vx += (K * (ax - T.x) - C_REL * (T.vx - T.avx) - C_AIR * T.vx) * h; T.x += T.vx * h;
-      T.vy += (K * (ay - T.y) - C_REL * (T.vy - T.avy) - C_AIR * T.vy) * h; T.y += T.vy * h;
-      T.vth += (K_LEAN * ((T.x - ax) * LEAN - T.th) - C_LEAN * T.vth) * h; T.th += T.vth * h;
+    if (calm.matches) return;
+    // a drag starts with every pill moving along with the window, so nothing jolts
+    if (!trail.on) {
+      trail.on = true;
+      for (const b of [...bodies.values(), ...ghosts]) { b.dvx = trail.avx; b.dvy = trail.avy; }
     }
-    T.t = now;
-    const rx = T.x - ax, ry = T.y - ay;
-    const rest = !drag && Math.abs(T.avx) + Math.abs(T.avy) < 1 && Math.hypot(rx, ry) < 0.15 &&
-      Math.hypot(T.vx - T.avx, T.vy - T.avy) < 2 && Math.abs(T.th) < 0.02 && Math.abs(T.vth) < 0.3;
-    if (rest) { T.on = false; elStack.style.transform = ""; requestAnimationFrame(sendRects); return; }
-    // trailing to the left tips the far end of the stack left: anticlockwise above the pet, clockwise below
-    const lean = place.v === "above" ? T.th : -T.th;
-    elStack.style.transform = `translate(${soft(rx).toFixed(2)}px, ${soft(ry).toFixed(2)}px) rotate(${lean.toFixed(3)}deg)`;
-    requestAnimationFrame(trailFrame);
-  }
+    kick();
+  });
 
   /* Pets whose run rows aren't a proper walk cycle can lean into the drag instead (pet.json
      claudeCompanion.tilt, a toggle in the editor): the sprite tips from its feet toward where the window is
@@ -452,7 +719,7 @@
   on("cursor", ([x, y]) => {
     const hp = inPet(x, y);
     if (hp !== hoverPet) { hoverPet = hp; elPet.classList.toggle("hover", hp); updateSprite(); requestAnimationFrame(sendRects); }
-    for (const p of elStack.querySelectorAll(".pill")) {
+    for (const p of elStack.querySelectorAll(".pill:not(.ly)")) {
       const r = p.getBoundingClientRect();
       p.classList.toggle("hover", x >= r.left && x < r.right && y >= r.top && y < r.bottom);
     }
@@ -476,7 +743,10 @@
     if (!drag || e.pointerId !== drag.id) return;
     if (!drag.moved && Math.hypot(e.screenX - drag.x0, e.screenY - drag.y0) >= 4) {
       drag.moved = true; elPet.classList.add("dragging"); player.setLook(null);
-      invoke("drag_start").catch(() => {});
+      const off = petOffset();
+      invoke("drag_start", { pet: [off.x, off.y, dims.S, dims.SH, KEYS] }).catch(() => {});
+      // follow() places the pills from these as the pet crosses the screen
+      invoke("overlay_info").then((i) => { monitors = i.monitors; }).catch(() => {});
     }
     if (!drag.moved) return;
     const d = e.screenX - drag.lx;
